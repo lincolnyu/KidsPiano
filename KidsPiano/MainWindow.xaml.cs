@@ -1,4 +1,5 @@
-﻿using System.IO;
+using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using KidsPiano.Models;
@@ -10,78 +11,83 @@ namespace KidsPiano;
 
 public partial class MainWindow : Window
 {
-    private readonly MusicXmlParserService _parser = new();
-    private string _currentMusicXmlContent = string.Empty;
-    private Piece? _currentPiece;
-    private double _currentSpeed = 1.0;
-    private bool _isPlaying;
-    private string _lastFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    // ── Services ───────────────────────────────────────────────────────────────
+    private readonly MusicXmlParserService   _parser          = new();
     private readonly KeyboardVisualizerService _keyboardService;
-    private int _currentMeasureIndex = 0;   // Start at first measure
+    private readonly PitchDetectorService    _pitchDetector;
+    private readonly PlaybackService         _playback;
+    private readonly TrackingService         _tracking        = new();
 
-    private readonly PitchDetectorService _pitchDetector;
+    // ── State ──────────────────────────────────────────────────────────────────
+    private string  _currentMusicXmlContent = string.Empty;
+    private Piece?  _currentPiece;
+    private double  _currentSpeed           = 1.0;
+    private bool    _isPlaying;
+    private string  _lastFolder             = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    private int     _currentMeasureIndex    = 0;
+    private bool    _webViewReady           = false;
+
+    // Whether we are in player-led mode (false = app-led)
+    private bool IsPlayerLed => cmbMode.SelectedIndex == 1;
 
     public MainWindow()
     {
         InitializeComponent();
+
         _keyboardService = new KeyboardVisualizerService(canvasKeyboard);
-        _pitchDetector = new PitchDetectorService(OnNotesDetected);
+        _pitchDetector   = new PitchDetectorService(OnNotesDetected);
+        _playback        = new PlaybackService();
+
+        // Playback events
+        _playback.OnMeasureStarted    += OnPlaybackMeasureStarted;
+        _playback.OnPlaybackFinished  += OnPlaybackFinished;
+
+        // Tracking events
+        _tracking.OnChordAccepted     += OnChordAccepted;
+        _tracking.OnRepeatSegment     += OnRepeatSegment;
+        _tracking.OnNoteColorsChanged += OnTrackingNoteColorsChanged;
+
         Loaded += MainWindow_Loaded;
-    }
-
-    private void OnNotesDetected(List<int> detectedPitches)
-    {
-        // Must run on UI thread because we update WPF controls
-        Dispatcher.Invoke(() =>
+        Closing += (_, __) =>
         {
-            if (detectedPitches.Count == 0)
-            {
-                // Clear played notes when nothing is detected
-                _keyboardService.UpdatePlayedNotes(new Dictionary<int, string>());
-                return;
-            }
-
-            // Show played notes as colored circles (dark green for now)
-            var played = detectedPitches.ToDictionary(p => p, p => "green");
-
-            _keyboardService.UpdatePlayedNotes(played);
-        });
+            _pitchDetector.Dispose();
+            _playback.Dispose();
+        };
     }
 
+    // ── Init ───────────────────────────────────────────────────────────────────
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        // Initialize WebView2
         await webViewScore.EnsureCoreWebView2Async(null);
-        // TODO: Later we will load OpenSheetMusicDisplay here
         webViewScore.CoreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
-
         _keyboardService.InitializeKeyboard();
-
-        // Default zoom
-        cmbZoom.SelectedIndex = 2; // 3 octaves
+        cmbZoom.SelectedIndex = 2; // 3 octaves default
     }
 
-    private void cmbZoom_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void CoreWebView2_WebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
-        if (cmbZoom.SelectedItem is ComboBoxItem item &&
-            int.TryParse(item.Tag?.ToString(), out int zoom) && _keyboardService is not null)
+        try
         {
-            _keyboardService.SetZoom(zoom);
+            var json = System.Text.Json.JsonDocument.Parse(e.TryGetWebMessageAsString());
+            if (json.RootElement.TryGetProperty("type", out var t) && t.GetString() == "ready")
+                _webViewReady = true;
         }
+        catch { }
     }
 
+    // ── File open ──────────────────────────────────────────────────────────────
     private void btnOpen_Click(object sender, RoutedEventArgs e)
     {
         var dlg = new OpenFileDialog
         {
-            Filter = "MusicXML files (*.musicxml;*.xml)|*.musicxml;*.xml|MIDI files (*.mid)|*.mid|All files (*.*)|*.*",
+            Filter          = "MusicXML files (*.musicxml;*.xml)|*.musicxml;*.xml|MIDI files (*.mid)|*.mid|All files (*.*)|*.*",
             InitialDirectory = _lastFolder
         };
 
         if (dlg.ShowDialog() == true)
         {
-            _lastFolder = Path.GetDirectoryName(dlg.FileName);
-            txtSongName.Text = "Loading..."; // Will extract real title later
+            _lastFolder = Path.GetDirectoryName(dlg.FileName) ?? _lastFolder;
+            txtSongName.Text = "Loading...";
             LoadMusicFile(dlg.FileName);
         }
     }
@@ -93,134 +99,238 @@ public partial class MainWindow : Window
         if (!string.IsNullOrEmpty(warning))
         {
             if (warning.StartsWith("Invalid"))
-                MessageBox.Show(warning, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(warning, "Error",   MessageBoxButton.OK, MessageBoxImage.Error);
             else
                 MessageBox.Show(warning, "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
-        txtSongName.Text = piece.Title;
-        _currentPiece = piece;
+        txtSongName.Text     = piece.Title;
+        _currentPiece        = piece;
         _currentMeasureIndex = 0;
-
-        // Read the raw MusicXML content for OSMD
         _currentMusicXmlContent = File.ReadAllText(filePath);
 
-        // Load into WebView2
+        // Load into OSMD
         if (webViewScore.CoreWebView2 != null)
             await LoadScoreIntoWebView();
         else
-            // Wait until WebView2 is ready
-            webViewScore.CoreWebView2InitializationCompleted += async (s, e) =>
+            webViewScore.CoreWebView2InitializationCompleted += async (s, ev) =>
             {
-                if (e.IsSuccess)
-                    await LoadScoreIntoWebView();
+                if (ev.IsSuccess) await LoadScoreIntoWebView();
             };
 
-        // Show expected notes on keyboard for the first measure
-        ShowExpectedNotesForCurrentMeasure();
-    }
-
-    private void ShowExpectedNotesForCurrentMeasure()
-    {
-        if (_currentPiece == null || _currentPiece.Measures.Count == 0) return;
-
-        var currentMeasure = _currentPiece.Measures[_currentMeasureIndex];
-
-        var expectedPitches = currentMeasure.Notes.Select(n => n.MidiPitch).ToList();
-
-        _keyboardService.UpdateExpectedNotes(expectedPitches);
-
-        // Optional: Show a small message for testing
-        // MessageBox.Show($"Showing measure {_currentMeasureIndex + 1} with {expectedPitches.Count} notes");
+        RefreshCurrentMeasure();
     }
 
     private async Task LoadScoreIntoWebView()
     {
-        if (string.IsNullOrEmpty(_currentMusicXmlContent) || _currentPiece == null)
-            return;
+        if (string.IsNullOrEmpty(_currentMusicXmlContent)) return;
 
-        string htmlPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot", "index.html");
-
-        if (!System.IO.File.Exists(htmlPath))
+        string htmlPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot", "index.html");
+        if (!File.Exists(htmlPath))
         {
-            MessageBox.Show("wwwroot/index.html not found.\nPlease make sure the file exists and is set to Copy if newer.",
-                "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show("wwwroot/index.html not found.", "Error",
+                MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
 
-        // Navigate to our local HTML page
         webViewScore.Source = new Uri("file:///" + htmlPath.Replace("\\", "/"));
+        await Task.Delay(1500); // Wait for OSMD JS to load
 
-        // Wait for the page and OSMD to fully initialize
-        await Task.Delay(1200);
+        // Escape the XML so it can be passed as a JS template literal
+        string escaped = _currentMusicXmlContent
+            .Replace("\\", "\\\\")
+            .Replace("`",  "\\`")
+            .Replace("$",  "\\$");
 
-        // Escape backticks and inject the MusicXML content
-        string escapedXml = _currentMusicXmlContent.Replace("`", "\\`").Replace("\\", "\\\\");
+        await webViewScore.CoreWebView2.ExecuteScriptAsync($"loadScore(`{escaped}`)");
+    }
 
-        string script = $"loadScore(`{escapedXml}`)";
+    // ── Measure navigation helpers ─────────────────────────────────────────────
+    private void RefreshCurrentMeasure()
+    {
+        if (_currentPiece == null || _currentPiece.Measures.Count == 0) return;
 
-        string result = await webViewScore.CoreWebView2.ExecuteScriptAsync(script);
+        var measure = _currentPiece.Measures[_currentMeasureIndex];
+        var expectedPitches = measure.Notes.Select(n => n.MidiPitch).Distinct().ToList();
 
-        // OSMD loadScore returns true on success, false on failure
-        bool success = result?.Trim().Equals("{}", StringComparison.OrdinalIgnoreCase) == true;
+        // Update keyboard expected keys
+        _keyboardService.UpdateExpectedNotes(expectedPitches);
 
-        if (success)
+        // Auto-center keyboard on expected note range
+        if (expectedPitches.Count > 0)
+            _keyboardService.CenterOnNotes(expectedPitches);
+
+        // Update OSMD highlight
+        _ = HighlightMeasureInScore(_currentMeasureIndex);
+
+        // Set expected pitches for tracking
+        _tracking.SetExpectedPitches(expectedPitches);
+    }
+
+    private async Task HighlightMeasureInScore(int measureIndex)
+    {
+        if (webViewScore.CoreWebView2 == null) return;
+        try
         {
-            MessageBox.Show($"Score loaded successfully!\n\n" +
-                            $"Title: {_currentPiece.Title}\n" +
-                            $"Measures: {_currentPiece.TotalMeasures}",
-                "Kids Piano 🎹", MessageBoxButton.OK, MessageBoxImage.Information);
+            await webViewScore.CoreWebView2.ExecuteScriptAsync(
+                $"highlightMeasure({measureIndex})");
+        }
+        catch { }
+    }
+
+    // ── Pitch detection callback ───────────────────────────────────────────────
+    private void OnNotesDetected(List<int> detectedPitches)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            if (!IsPlayerLed || !_isPlaying)
+            {
+                // In app-led mode or paused: just visualise what's being played
+                var playedColors = detectedPitches.ToDictionary(p => p, _ => "green");
+                _keyboardService.UpdatePlayedNotes(playedColors);
+                return;
+            }
+
+            // Player-led mode: run tracking logic
+            var colors = _tracking.ProcessDetectedNotes(detectedPitches);
+            _keyboardService.UpdatePlayedNotes(colors);
+        });
+    }
+
+    // ── Tracking callbacks ─────────────────────────────────────────────────────
+    private void OnChordAccepted()
+    {
+        // Advance to next note/chord within the measure, or next measure
+        // For v1: advance one whole measure at a time (simplification)
+        AdvanceToNextMeasure();
+    }
+
+    private void OnRepeatSegment()
+    {
+        Dispatcher.Invoke(() =>
+        {
+            _tracking.SetExpectedPitches(
+                _currentPiece?.Measures[_currentMeasureIndex].Notes
+                    .Select(n => n.MidiPitch).Distinct() ?? Enumerable.Empty<int>());
+            RefreshCurrentMeasure();
+        });
+    }
+
+    private void OnTrackingNoteColorsChanged(Dictionary<int, string> playedColors)
+    {
+        // Already handled in OnNotesDetected; OSMD score colour update here
+        if (_currentPiece == null) return;
+        var measure = _currentPiece.Measures[_currentMeasureIndex];
+        var expected = measure.Notes.Select(n => n.MidiPitch).Distinct().ToList();
+        var played   = playedColors.Keys.ToList();
+
+        var scoreMap = TrackingService.BuildScoreColorMap(played, expected, _tracking.Tolerance);
+        var json     = JsonSerializer.Serialize(scoreMap);
+
+        Dispatcher.Invoke(async () =>
+        {
+            if (webViewScore.CoreWebView2 != null)
+                await webViewScore.CoreWebView2.ExecuteScriptAsync(
+                    $"updateNoteColors({_currentMeasureIndex}, {json})");
+        });
+    }
+
+    private void AdvanceToNextMeasure()
+    {
+        if (_currentPiece == null) return;
+
+        if (_currentMeasureIndex < _currentPiece.Measures.Count - 1)
+        {
+            _currentMeasureIndex++;
+            Dispatcher.Invoke(RefreshCurrentMeasure);
         }
         else
         {
-            MessageBox.Show("Failed to render the score.\nCheck the MusicXML file or console (F12).",
-                "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+            // End of piece
+            _isPlaying = false;
+            Dispatcher.Invoke(() => btnPlayPause.Content = "▶ Play");
         }
     }
 
-    // Speed buttons
+    // ── Playback callbacks ─────────────────────────────────────────────────────
+    private void OnPlaybackMeasureStarted(int measureIndex)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            _currentMeasureIndex = measureIndex;
+            RefreshCurrentMeasure();
+        });
+    }
+
+    private void OnPlaybackFinished()
+    {
+        Dispatcher.Invoke(() =>
+        {
+            _isPlaying = false;
+            btnPlayPause.Content = "▶ Play";
+        });
+    }
+
+    // ── UI event handlers ──────────────────────────────────────────────────────
+
+    private void cmbZoom_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (cmbZoom.SelectedItem is ComboBoxItem item &&
+            int.TryParse(item.Tag?.ToString(), out int zoom))
+            _keyboardService?.SetZoom(zoom);
+    }
+
     private void SpeedButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button btn && double.TryParse(btn.Tag?.ToString(), out var speed)) _currentSpeed = speed;
-        // Highlight selected button later
+        if (sender is Button btn && double.TryParse(btn.Tag?.ToString(), out var speed))
+            _currentSpeed = speed;
     }
 
     private void btnPlayPause_Click(object sender, RoutedEventArgs e)
     {
+        if (_currentPiece == null) return;
+
         _isPlaying = !_isPlaying;
         btnPlayPause.Content = _isPlaying ? "⏸ Pause" : "▶ Play";
-        // TODO: Start/stop playback or tracking
+
+        if (IsPlayerLed)
+        {
+            // Player-led: pause/resume tracking
+            if (_isPlaying) _tracking.Resume();
+            else            _tracking.Pause();
+        }
+        else
+        {
+            // App-led: play/pause MIDI playback
+            if (_isPlaying)
+                _playback.Play(_currentPiece, _currentMeasureIndex, _currentSpeed);
+            else
+                _playback.Stop();
+        }
     }
 
     private void btnRestart_Click(object sender, RoutedEventArgs e)
     {
-        _currentMeasureIndex = 0;
-        ShowExpectedNotesForCurrentMeasure();
+        _isPlaying = false;
+        btnPlayPause.Content = "▶ Play";
+        _playback.Stop();
 
-        // Later we will also reset the score position
-        MessageBox.Show("Restarted from the beginning! 🎵", "Kids Piano");
+        _currentMeasureIndex = 0;
+        RefreshCurrentMeasure();
     }
 
     private void btnNext_Click(object sender, RoutedEventArgs e)
     {
-        if (_currentPiece == null || _currentMeasureIndex >= _currentPiece.Measures.Count - 1)
-            return;
-
+        if (_currentPiece == null || _currentMeasureIndex >= _currentPiece.Measures.Count - 1) return;
         _currentMeasureIndex++;
-        ShowExpectedNotesForCurrentMeasure();
+        RefreshCurrentMeasure();
     }
 
     private void btnPrev_Click(object sender, RoutedEventArgs e)
     {
         if (_currentMeasureIndex <= 0) return;
-
         _currentMeasureIndex--;
-        ShowExpectedNotesForCurrentMeasure();
-    }
-
-    private void CoreWebView2_WebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
-    {
-        // Will handle JS → C# messages for note detection feedback later
+        RefreshCurrentMeasure();
     }
 
     private void btnMicToggle_Click(object sender, RoutedEventArgs e)
@@ -236,4 +346,50 @@ public partial class MainWindow : Window
             ((Button)sender).Content = "⏹ Stop Mic";
         }
     }
+
+    // Tolerance dropdown
+    private void cmbTolerance_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _tracking.Tolerance = cmbTolerance.SelectedIndex switch
+        {
+            1 => TrackingService.ToleranceLevel.Medium,
+            2 => TrackingService.ToleranceLevel.Easy,
+            _ => TrackingService.ToleranceLevel.Strict
+        };
+    }
+
+    // Wrong notes dropdown
+    private void cmbWrongHandling_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _tracking.WrongMode = cmbWrongHandling.SelectedIndex == 1
+            ? TrackingService.WrongNotesMode.RepeatSegment
+            : TrackingService.WrongNotesMode.UntilCorrected;
+    }
+
+    // Volume slider
+    private void sldVolume_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_playback != null)
+            _playback.Volume = (int)sldVolume.Value;
+    }
+
+    // Metronome slider
+    private void sldMetronome_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_playback != null)
+            _playback.MetronomeVolume = (int)sldMetronome.Value;
+    }
+
+    private void cmbMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Stop any active playback/tracking when mode changes
+        if (_isPlaying)
+        {
+            _isPlaying = false;
+            btnPlayPause.Content = "▶";
+            _playback.Stop();
+            _tracking.Pause();
+        }
+    }
+
 }

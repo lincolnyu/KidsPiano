@@ -1,137 +1,186 @@
-﻿using System.Windows.Controls;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using KidsPiano.Models;
 
 namespace KidsPiano.Services;
 
+/// <summary>
+/// Draws an 88-key piano keyboard onto a WPF Canvas and maintains
+/// expected (light-green) and played (colored circles) note overlays.
+/// </summary>
 public class KeyboardVisualizerService
 {
-    private readonly Dictionary<int, Rectangle> _blackKeys = new();
-    private readonly Canvas _canvas;
-    private readonly List<Ellipse> _playedCircles = new();
-
-    private readonly Dictionary<int, Rectangle> _whiteKeys = new();
+    // ── Internals ─────────────────────────────────────────────────────────────
+    private readonly Canvas     _canvas;
     private readonly KeyboardState _state = new();
 
-    public KeyboardVisualizerService(Canvas canvas)
-    {
-        _canvas = canvas;
-    }
+    // key rectangles keyed by MIDI pitch
+    private readonly Dictionary<int, Rectangle> _whiteKeys = new();
+    private readonly Dictionary<int, Rectangle> _blackKeys = new();
+    private readonly List<Ellipse>              _playedCircles = new();
 
+    // MIDI pitch of the first key drawn (C of _state.StartOctave)
+    private int _startMidiPitch;
+
+    public KeyboardVisualizerService(Canvas canvas) => _canvas = canvas;
+
+    // ── Init ──────────────────────────────────────────────────────────────────
     public void InitializeKeyboard()
     {
         _canvas.Children.Clear();
         _whiteKeys.Clear();
         _blackKeys.Clear();
-        DrawFullWidthKeyboard();
+        _playedCircles.Clear();
+        _canvas.UpdateLayout();
+        DrawKeyboard();
     }
 
-    private void DrawFullWidthKeyboard()
+    // ── Drawing ───────────────────────────────────────────────────────────────
+
+    private void DrawKeyboard()
     {
-        // Make canvas fill the available space
-        _canvas.Width = double.NaN; // Stretch
-        _canvas.Height = double.NaN;
+        double w = _canvas.ActualWidth;
+        double h = _canvas.ActualHeight;
+        if (w < 10 || h < 10) { _canvas.Dispatcher.InvokeAsync(DrawKeyboard); return; }
 
-        // Calculate how many white keys to show
-        var visibleWhiteKeys = GetVisibleWhiteKeys();
+        int totalWhiteKeys = GetVisibleWhiteKeyCount();
+        double wkW = w / totalWhiteKeys;        // white-key width
+        double wkH = h - 8;                      // white-key height
+        double bkW = wkW * 0.60;
+        double bkH = wkH * 0.62;
 
-        var whiteKeyWidth = _canvas.ActualWidth / visibleWhiteKeys;
-        if (whiteKeyWidth < 20) whiteKeyWidth = 20; // minimum size
+        // Start at C of the start octave
+        _startMidiPitch = _state.StartOctave * 12; // MIDI for C of that octave
 
-        var whiteKeyHeight = _canvas.ActualHeight - 10;
-        var blackKeyWidth = whiteKeyWidth * 0.65;
-        var blackKeyHeight = whiteKeyHeight * 0.68;
+        // The 88 piano keys start at A0 = MIDI 21 (C-1 = 0, so A0 = 21)
+        // We need to map from our start octave C correctly.
+        // Standard: MIDI 21 = A0, MIDI 60 = C4, MIDI 108 = C8
+        // Octave in MIDI: octave n starts at MIDI (n+1)*12
+        // So C4 = (4+1)*12 = 60 ✓
 
-        _canvas.Children.Clear();
-
-        var startMidi = _state.StartOctave * 12;
         double x = 0;
+        int whiteKeyNum = 0;
 
-        for (var i = 0; i < visibleWhiteKeys; i++)
+        for (int midi = _startMidiPitch; whiteKeyNum < totalWhiteKeys; midi++)
         {
-            var currentMidi = startMidi + i;
+            if (midi > 108) break;
+
+            bool isBlack = IsBlackKey(midi);
+            if (isBlack) continue;   // handled after the white key below it
 
             // White key
-            var whiteKey = new Rectangle
+            var wk = new Rectangle
             {
-                Width = whiteKeyWidth - 1, // small gap for separation
-                Height = whiteKeyHeight,
-                Fill = Brushes.White,
-                Stroke = Brushes.Black,
-                StrokeThickness = 3,
-                RadiusX = 6,
-                RadiusY = 6
+                Width  = wkW - 1.5,
+                Height = wkH,
+                Fill   = _state.ExpectedNotes.Contains(midi)
+                         ? new SolidColorBrush(Color.FromRgb(144, 238, 144))
+                         : Brushes.White,
+                Stroke          = Brushes.DimGray,
+                StrokeThickness = 1.5,
+                RadiusX = 5, RadiusY = 5
             };
+            Canvas.SetLeft(wk, x);
+            Canvas.SetTop(wk, 4);
+            _canvas.Children.Add(wk);
+            _whiteKeys[midi] = wk;
 
-            Canvas.SetLeft(whiteKey, x);
-            Canvas.SetTop(whiteKey, 5);
-            _canvas.Children.Add(whiteKey);
-            _whiteKeys[currentMidi] = whiteKey;
-
-            // Black keys (between white keys)
-            if (ShouldDrawBlackKey(i))
+            // Black key to the RIGHT of this white key (if applicable)
+            int blackMidi = midi + 1;
+            if (IsBlackKey(blackMidi) && blackMidi <= 108)
             {
-                var blackKey = new Rectangle
+                var bk = new Rectangle
                 {
-                    Width = blackKeyWidth,
-                    Height = blackKeyHeight,
-                    Fill = Brushes.Black,
-                    Stroke = Brushes.Gray,
-                    StrokeThickness = 2,
-                    RadiusX = 4,
-                    RadiusY = 4
+                    Width  = bkW,
+                    Height = bkH,
+                    Fill   = _state.ExpectedNotes.Contains(blackMidi)
+                             ? new SolidColorBrush(Color.FromRgb(0, 180, 0))
+                             : Brushes.Black,
+                    Stroke          = Brushes.Gray,
+                    StrokeThickness = 1,
+                    RadiusX = 3, RadiusY = 3
                 };
-
-                Canvas.SetLeft(blackKey, x + whiteKeyWidth * 0.68);
-                Canvas.SetTop(blackKey, 5);
-                _canvas.Children.Add(blackKey);
-                _blackKeys[currentMidi + 1] = blackKey; // black note is +1 semitone
+                Canvas.SetLeft(bk, x + wkW * 0.62);
+                Canvas.SetTop(bk, 4);
+                Panel.SetZIndex(bk, 1);
+                _canvas.Children.Add(bk);
+                _blackKeys[blackMidi] = bk;
             }
 
-            x += whiteKeyWidth;
+            x += wkW;
+            whiteKeyNum++;
         }
     }
 
-    private int GetVisibleWhiteKeys()
+    // ── Key type helpers ──────────────────────────────────────────────────────
+    // Within an octave (0=C..11=B): black keys are 1,3,6,8,10 (C#,D#,F#,G#,A#)
+    private static bool IsBlackKey(int midi)
     {
-        if (_state.ZoomLevel == 88) return 52; // full keyboard approx
-        return _state.ZoomLevel * 7; // 7 white keys per octave
+        int pos = ((midi % 12) + 12) % 12;
+        return pos == 1 || pos == 3 || pos == 6 || pos == 8 || pos == 10;
     }
 
-    private bool ShouldDrawBlackKey(int whiteIndex)
+    private int GetVisibleWhiteKeyCount()
     {
-        var pos = whiteIndex % 7;
-        return pos == 0 || pos == 1 || pos == 3 || pos == 4 || pos == 5; // C# D# F# G# A#
+        return _state.ZoomLevel == 88
+            ? 52 // full 88-key keyboard has 52 white keys
+            : _state.ZoomLevel * 7; // 7 white keys per octave
     }
 
+    // ── Zoom ──────────────────────────────────────────────────────────────────
     public void SetZoom(int zoomLevel)
     {
         _state.ZoomLevel = zoomLevel == 88 ? 88 : Math.Clamp(zoomLevel, 1, 4);
         InitializeKeyboard();
     }
 
-    // Temporary method - we'll connect real expected notes soon
-    public void TestExpectedNotes()
+    // ── Auto-center ───────────────────────────────────────────────────────────
+    /// <summary>
+    /// Shifts the keyboard view so the given notes are visible and centered.
+    /// Always snaps to the start of an octave (C).
+    /// </summary>
+    public void CenterOnNotes(IEnumerable<int> pitches)
     {
-        var testNotes = new List<int> { 60, 64, 67 }; // Middle C, E, G
-        UpdateExpectedNotes(testNotes);
+        if (_state.ZoomLevel == 88) return; // no panning in full view
+
+        var list = pitches.Where(p => p >= 21 && p <= 108).ToList();
+        if (list.Count == 0) return;
+
+        int lowestMidi  = list.Min();
+        int highestMidi = list.Max();
+
+        // Octave of the lowest note
+        int lowestOctave  = lowestMidi / 12;
+        int highestOctave = highestMidi / 12;
+
+        // Pick the octave that centers the range under the current zoom window
+        int halfZoom    = _state.ZoomLevel / 2;
+        int targetStart = Math.Max(0, lowestOctave - halfZoom + (highestOctave - lowestOctave) / 2);
+
+        // Clamp so we don't go past the keyboard edges
+        int maxStart = 9 - _state.ZoomLevel; // C9 is beyond piano, so 9 octaves
+        targetStart = Math.Clamp(targetStart, 0, Math.Max(0, maxStart));
+
+        if (targetStart == _state.StartOctave) return;
+        _state.StartOctave = targetStart;
+        InitializeKeyboard();
     }
 
+    // ── Expected notes ────────────────────────────────────────────────────────
     public void UpdateExpectedNotes(IEnumerable<int> expectedPitches)
     {
         _state.ExpectedNotes.Clear();
         foreach (var p in expectedPitches)
             _state.ExpectedNotes.Add(p);
-
-        HighlightExpectedKeys();
+        RefreshKeyColors();
     }
 
-    private void HighlightExpectedKeys()
+    private void RefreshKeyColors()
     {
         foreach (var kvp in _whiteKeys)
             kvp.Value.Fill = _state.ExpectedNotes.Contains(kvp.Key)
-                ? new SolidColorBrush(Color.FromRgb(144, 238, 144)) // light green
+                ? new SolidColorBrush(Color.FromRgb(144, 238, 144))
                 : Brushes.White;
 
         foreach (var kvp in _blackKeys)
@@ -140,11 +189,10 @@ public class KeyboardVisualizerService
                 : Brushes.Black;
     }
 
+    // ── Played notes (circles) ────────────────────────────────────────────────
     public void UpdatePlayedNotes(Dictionary<int, string> played)
     {
-        // Clear old circles first
-        foreach (var circle in _playedCircles.ToList())   // ToList to avoid modification during enumeration
-            _canvas.Children.Remove(circle);
+        foreach (var c in _playedCircles) _canvas.Children.Remove(c);
         _playedCircles.Clear();
 
         if (played == null || played.Count == 0) return;
@@ -152,41 +200,44 @@ public class KeyboardVisualizerService
         foreach (var kvp in played)
         {
             int pitch = kvp.Key;
-            string colorName = kvp.Value;
-
-            Brush fill = colorName switch
+            Brush fill = kvp.Value switch
             {
-                "red" => Brushes.Red,
-                "orange" => Brushes.Orange,
-                _ => Brushes.DarkGreen
+                "red"       => Brushes.Red,
+                "orange"    => Brushes.Orange,
+                "darkgreen" => new SolidColorBrush(Color.FromRgb(0, 140, 0)),
+                _           => new SolidColorBrush(Color.FromRgb(0, 140, 0))
             };
+
+            double cx, cy, cSize = 28;
+
+            if (_whiteKeys.TryGetValue(pitch, out var wk))
+            {
+                cx = Canvas.GetLeft(wk) + wk.Width / 2 - cSize / 2;
+                cy = 4 + wk.Height - cSize - 10;
+            }
+            else if (_blackKeys.TryGetValue(pitch, out var bk))
+            {
+                cx = Canvas.GetLeft(bk) + bk.Width / 2 - cSize / 2;
+                cy = 4 + bk.Height - cSize - 6;
+            }
+            else continue; // not visible in current zoom
 
             var circle = new Ellipse
             {
-                Width = 32,
-                Height = 32,
-                Fill = fill,
+                Width  = cSize,
+                Height = cSize,
+                Fill   = fill,
                 Stroke = Brushes.White,
-                StrokeThickness = 5
+                StrokeThickness = 3
             };
-
-            if (_whiteKeys.TryGetValue(pitch, out var white) && white != null)
-            {
-                Canvas.SetLeft(circle, Canvas.GetLeft(white) + white.Width / 2 - 16);
-                Canvas.SetTop(circle, white.Height - 55);
-            }
-            else if (_blackKeys.TryGetValue(pitch, out var black) && black != null)
-            {
-                Canvas.SetLeft(circle, Canvas.GetLeft(black) + black.Width / 2 - 16);
-                Canvas.SetTop(circle, 35);
-            }
-            else
-            {
-                continue; // skip if key not visible in current zoom
-            }
-
+            Panel.SetZIndex(circle, 2);
+            Canvas.SetLeft(circle, cx);
+            Canvas.SetTop(circle, cy);
             _canvas.Children.Add(circle);
             _playedCircles.Add(circle);
         }
     }
+
+    // Legacy test helper
+    public void TestExpectedNotes() => UpdateExpectedNotes(new[] { 60, 64, 67 });
 }

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Kids Piano Score</title>
+    <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.7.0/build/opensheetmusicdisplay.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: white;
+            font-family: Segoe UI;
+        }
+
+        #osmd-container {
+            width: 100%;
+            height: 100%;
+        }
+
+        .staff {
+            margin-bottom: 40px;
+        }
+    </style>
+</head>
+<body>
+    <div id="osmd-container"></div>
+
+    <script>
+        let osmd = null;
+
+        async function loadScore(musicXml) {
+            if (!osmd) {
+                osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay("osmd-container", {
+                    autoResize: true,
+                    drawTitle: true,
+                    drawSubtitle: false,
+                    drawLyricist: false,
+                    drawComposer: false,
+                    drawPartNames: false,
+                    renderingMode: 1,           // SVG
+                    drawMeasureNumbers: true,
+                    drawMeasureNumbersOnlyOnTop: true
+                });
+            }
+
+            try {
+                await osmd.load(musicXml);
+                await osmd.render();
+                console.log("? Score rendered successfully with OSMD");
+                return true;
+            } catch (err) {
+                console.error("? Render error:", err);
+                return false;
+            }
+        }
+
+        // Function to highlight a specific note (we'll call this from C# later)
+        function highlightNote(measureIndex, noteIndex, color) {
+            if (!osmd) return false;
+            // Basic placeholder - full highlighting logic will be expanded later
+            console.log(`Highlighting measure ${measureIndex}, note ${noteIndex} with color ${color}`);
+            return true;
+        }
+
+        window.loadScore = loadScore;
+        window.highlightNote = highlightNote;
+    </script>
+</body>
+</html>

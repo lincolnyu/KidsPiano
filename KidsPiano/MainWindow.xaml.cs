@@ -1,6 +1,7 @@
 ﻿using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using KidsPiano.Models;
 using KidsPiano.Services;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
@@ -10,6 +11,8 @@ namespace KidsPiano;
 public partial class MainWindow : Window
 {
     private readonly MusicXmlParserService _parser = new();
+    private string _currentMusicXmlContent = string.Empty;
+    private Piece? _currentPiece;
     private double _currentSpeed = 1.0;
     private bool _isPlaying;
     private string _lastFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
@@ -44,7 +47,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void LoadMusicFile(string filePath)
+    private async void LoadMusicFile(string filePath)
     {
         var (piece, warning) = _parser.Parse(filePath);
 
@@ -57,10 +60,65 @@ public partial class MainWindow : Window
         }
 
         txtSongName.Text = piece.Title;
+        _currentPiece = piece;
 
-        // TODO: Later we will send this Piece to WebView2 for rendering
-        MessageBox.Show($"Successfully loaded!\nTitle: {piece.Title}\nMeasures: {piece.TotalMeasures}",
-            "Kids Piano 🎹", MessageBoxButton.OK, MessageBoxImage.Information);
+        // Read the raw MusicXML content for OSMD
+        _currentMusicXmlContent = File.ReadAllText(filePath);
+
+        // Load into WebView2
+        if (webViewScore.CoreWebView2 != null)
+            await LoadScoreIntoWebView();
+        else
+            // Wait until WebView2 is ready
+            webViewScore.CoreWebView2InitializationCompleted += async (s, e) =>
+            {
+                if (e.IsSuccess)
+                    await LoadScoreIntoWebView();
+            };
+    }
+
+    private async Task LoadScoreIntoWebView()
+    {
+        if (string.IsNullOrEmpty(_currentMusicXmlContent) || _currentPiece == null)
+            return;
+
+        string htmlPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot", "index.html");
+
+        if (!System.IO.File.Exists(htmlPath))
+        {
+            MessageBox.Show("wwwroot/index.html not found.\nPlease make sure the file exists and is set to Copy if newer.",
+                "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        // Navigate to our local HTML page
+        webViewScore.Source = new Uri("file:///" + htmlPath.Replace("\\", "/"));
+
+        // Wait for the page and OSMD to fully initialize
+        await Task.Delay(1200);
+
+        // Escape backticks and inject the MusicXML content
+        string escapedXml = _currentMusicXmlContent.Replace("`", "\\`").Replace("\\", "\\\\");
+
+        string script = $"loadScore(`{escapedXml}`)";
+
+        string result = await webViewScore.CoreWebView2.ExecuteScriptAsync(script);
+
+        // OSMD loadScore returns true on success, false on failure
+        bool success = result?.Trim().Equals("{}", StringComparison.OrdinalIgnoreCase) == true;
+
+        if (success)
+        {
+            MessageBox.Show($"Score loaded successfully!\n\n" +
+                            $"Title: {_currentPiece.Title}\n" +
+                            $"Measures: {_currentPiece.TotalMeasures}",
+                "Kids Piano 🎹", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        else
+        {
+            MessageBox.Show("Failed to render the score.\nCheck the MusicXML file or console (F12).",
+                "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     // Speed buttons

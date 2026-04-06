@@ -1,6 +1,7 @@
 ﻿using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using KidsPiano.Services;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 
@@ -8,6 +9,7 @@ namespace KidsPiano;
 
 public partial class MainWindow : Window
 {
+    private readonly MusicXmlParserService _parser = new();
     private double _currentSpeed = 1.0;
     private bool _isPlaying;
     private string _lastFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
@@ -44,8 +46,20 @@ public partial class MainWindow : Window
 
     private void LoadMusicFile(string filePath)
     {
-        // TODO: Step-by-step we will implement parsing + rendering here
-        MessageBox.Show($"File selected: {filePath}\n\nParsing and rendering will be implemented next!",
+        var (piece, warning) = _parser.Parse(filePath);
+
+        if (!string.IsNullOrEmpty(warning))
+        {
+            if (warning.StartsWith("Invalid"))
+                MessageBox.Show(warning, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            else
+                MessageBox.Show(warning, "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
+        txtSongName.Text = piece.Title;
+
+        // TODO: Later we will send this Piece to WebView2 for rendering
+        MessageBox.Show($"Successfully loaded!\nTitle: {piece.Title}\nMeasures: {piece.TotalMeasures}",
             "Kids Piano 🎹", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 

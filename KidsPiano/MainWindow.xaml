@@ -116,6 +116,8 @@
                 <!-- Also play non-piano -->
                 <CheckBox x:Name="chkNonPiano" Content="Also play non-piano part" 
                           Margin="30,35,0,0" FontSize="24" Foreground="White" VerticalAlignment="Center"/>
+
+                <Button Content="🎤 Start Mic" Width="140" Height="55" Margin="12" Click="btnMicToggle_Click"/>
             </WrapPanel>
         </Border>
 

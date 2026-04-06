@@ -142,15 +142,17 @@ public class KeyboardVisualizerService
 
     public void UpdatePlayedNotes(Dictionary<int, string> played)
     {
-        // Clear old circles
-        foreach (var circle in _playedCircles)
+        // Clear old circles first
+        foreach (var circle in _playedCircles.ToList())   // ToList to avoid modification during enumeration
             _canvas.Children.Remove(circle);
         _playedCircles.Clear();
 
+        if (played == null || played.Count == 0) return;
+
         foreach (var kvp in played)
         {
-            var pitch = kvp.Key;
-            var colorName = kvp.Value;
+            int pitch = kvp.Key;
+            string colorName = kvp.Value;
 
             Brush fill = colorName switch
             {
@@ -159,7 +161,7 @@ public class KeyboardVisualizerService
                 _ => Brushes.DarkGreen
             };
 
-            var circle = new Ellipse    
+            var circle = new Ellipse
             {
                 Width = 32,
                 Height = 32,
@@ -168,15 +170,19 @@ public class KeyboardVisualizerService
                 StrokeThickness = 5
             };
 
-            if (_whiteKeys.TryGetValue(pitch, out var white))
+            if (_whiteKeys.TryGetValue(pitch, out var white) && white != null)
             {
                 Canvas.SetLeft(circle, Canvas.GetLeft(white) + white.Width / 2 - 16);
                 Canvas.SetTop(circle, white.Height - 55);
             }
-            else if (_blackKeys.TryGetValue(pitch, out var black))
+            else if (_blackKeys.TryGetValue(pitch, out var black) && black != null)
             {
                 Canvas.SetLeft(circle, Canvas.GetLeft(black) + black.Width / 2 - 16);
                 Canvas.SetTop(circle, 35);
+            }
+            else
+            {
+                continue; // skip if key not visible in current zoom
             }
 
             _canvas.Children.Add(circle);

@@ -19,11 +19,33 @@ public partial class MainWindow : Window
     private readonly KeyboardVisualizerService _keyboardService;
     private int _currentMeasureIndex = 0;   // Start at first measure
 
+    private readonly PitchDetectorService _pitchDetector;
+
     public MainWindow()
     {
         InitializeComponent();
         _keyboardService = new KeyboardVisualizerService(canvasKeyboard);
+        _pitchDetector = new PitchDetectorService(OnNotesDetected);
         Loaded += MainWindow_Loaded;
+    }
+
+    private void OnNotesDetected(List<int> detectedPitches)
+    {
+        // Must run on UI thread because we update WPF controls
+        Dispatcher.Invoke(() =>
+        {
+            if (detectedPitches.Count == 0)
+            {
+                // Clear played notes when nothing is detected
+                _keyboardService.UpdatePlayedNotes(new Dictionary<int, string>());
+                return;
+            }
+
+            // Show played notes as colored circles (dark green for now)
+            var played = detectedPitches.ToDictionary(p => p, p => "green");
+
+            _keyboardService.UpdatePlayedNotes(played);
+        });
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -199,5 +221,19 @@ public partial class MainWindow : Window
     private void CoreWebView2_WebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         // Will handle JS → C# messages for note detection feedback later
+    }
+
+    private void btnMicToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pitchDetector.IsListening)
+        {
+            _pitchDetector.StopListening();
+            ((Button)sender).Content = "🎤 Start Mic";
+        }
+        else
+        {
+            _pitchDetector.StartListening();
+            ((Button)sender).Content = "⏹ Stop Mic";
+        }
     }
 }

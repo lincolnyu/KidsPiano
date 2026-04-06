@@ -17,6 +17,7 @@ public partial class MainWindow : Window
     private bool _isPlaying;
     private string _lastFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
     private readonly KeyboardVisualizerService _keyboardService;
+    private int _currentMeasureIndex = 0;   // Start at first measure
 
     public MainWindow()
     {
@@ -77,6 +78,7 @@ public partial class MainWindow : Window
 
         txtSongName.Text = piece.Title;
         _currentPiece = piece;
+        _currentMeasureIndex = 0;
 
         // Read the raw MusicXML content for OSMD
         _currentMusicXmlContent = File.ReadAllText(filePath);
@@ -91,6 +93,23 @@ public partial class MainWindow : Window
                 if (e.IsSuccess)
                     await LoadScoreIntoWebView();
             };
+
+        // Show expected notes on keyboard for the first measure
+        ShowExpectedNotesForCurrentMeasure();
+    }
+
+    private void ShowExpectedNotesForCurrentMeasure()
+    {
+        if (_currentPiece == null || _currentPiece.Measures.Count == 0) return;
+
+        var currentMeasure = _currentPiece.Measures[_currentMeasureIndex];
+
+        var expectedPitches = currentMeasure.Notes.Select(n => n.MidiPitch).ToList();
+
+        _keyboardService.UpdateExpectedNotes(expectedPitches);
+
+        // Optional: Show a small message for testing
+        // MessageBox.Show($"Showing measure {_currentMeasureIndex + 1} with {expectedPitches.Count} notes");
     }
 
     private async Task LoadScoreIntoWebView()
@@ -153,18 +172,28 @@ public partial class MainWindow : Window
 
     private void btnRestart_Click(object sender, RoutedEventArgs e)
     {
-        // TODO: Reset to beginning
-        MessageBox.Show("Restarting from the beginning! 🎵", "Kids Piano");
+        _currentMeasureIndex = 0;
+        ShowExpectedNotesForCurrentMeasure();
+
+        // Later we will also reset the score position
+        MessageBox.Show("Restarted from the beginning! 🎵", "Kids Piano");
     }
 
     private void btnNext_Click(object sender, RoutedEventArgs e)
     {
-        /* TODO */
+        if (_currentPiece == null || _currentMeasureIndex >= _currentPiece.Measures.Count - 1)
+            return;
+
+        _currentMeasureIndex++;
+        ShowExpectedNotesForCurrentMeasure();
     }
 
     private void btnPrev_Click(object sender, RoutedEventArgs e)
     {
-        /* TODO */
+        if (_currentMeasureIndex <= 0) return;
+
+        _currentMeasureIndex--;
+        ShowExpectedNotesForCurrentMeasure();
     }
 
     private void CoreWebView2_WebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)

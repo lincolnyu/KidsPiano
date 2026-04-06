@@ -159,7 +159,7 @@ public class KeyboardVisualizerService
                 _ => Brushes.DarkGreen
             };
 
-            var circle = new Ellipse
+            var circle = new Ellipse    
             {
                 Width = 32,
                 Height = 32,

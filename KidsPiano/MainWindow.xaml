@@ -101,6 +101,18 @@
                     </ComboBox>
                 </StackPanel>
 
+                <!-- Keyboard Zoom -->
+                <StackPanel Margin="12">
+                    <TextBlock Text="Keyboard Zoom" FontSize="20" Foreground="White" Margin="0,0,0,8"/>
+                    <ComboBox x:Name="cmbZoom" Width="160" Height="55" FontSize="24" SelectionChanged="cmbZoom_SelectionChanged">
+                        <ComboBoxItem Content="1 Octave" Tag="1"/>
+                        <ComboBoxItem Content="2 Octaves" Tag="2"/>
+                        <ComboBoxItem Content="3 Octaves" Tag="3" IsSelected="True"/>
+                        <ComboBoxItem Content="4 Octaves" Tag="4"/>
+                        <ComboBoxItem Content="Full (88 keys)" Tag="88"/>
+                    </ComboBox>
+                </StackPanel>
+
                 <!-- Also play non-piano -->
                 <CheckBox x:Name="chkNonPiano" Content="Also play non-piano part" 
                           Margin="30,35,0,0" FontSize="24" Foreground="White" VerticalAlignment="Center"/>
@@ -111,8 +123,11 @@
         <wpf:WebView2 x:Name="webViewScore" Grid.Row="2" Margin="20" DefaultBackgroundColor="White" />
 
         <!-- ==================== Keyboard ==================== -->
-        <Border Grid.Row="3" Margin="20" Background="#FF2E7D32" CornerRadius="20">
-            <Canvas x:Name="canvasKeyboard" Background="Transparent" />
+        <Border Grid.Row="3" Margin="20" Background="#FF2E7D32" CornerRadius="20" Padding="15">
+            <Canvas x:Name="canvasKeyboard" 
+                    Background="Transparent" 
+                    HorizontalAlignment="Stretch" 
+                    VerticalAlignment="Stretch" />
         </Border>
     </Grid>
 </Window>

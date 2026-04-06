@@ -16,10 +16,12 @@ public partial class MainWindow : Window
     private double _currentSpeed = 1.0;
     private bool _isPlaying;
     private string _lastFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    private readonly KeyboardVisualizerService _keyboardService;
 
     public MainWindow()
     {
         InitializeComponent();
+        _keyboardService = new KeyboardVisualizerService(canvasKeyboard);
         Loaded += MainWindow_Loaded;
     }
 
@@ -29,6 +31,20 @@ public partial class MainWindow : Window
         await webViewScore.EnsureCoreWebView2Async(null);
         // TODO: Later we will load OpenSheetMusicDisplay here
         webViewScore.CoreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
+
+        _keyboardService.InitializeKeyboard();
+
+        // Default zoom
+        cmbZoom.SelectedIndex = 2; // 3 octaves
+    }
+
+    private void cmbZoom_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (cmbZoom.SelectedItem is ComboBoxItem item &&
+            int.TryParse(item.Tag?.ToString(), out int zoom) && _keyboardService is not null)
+        {
+            _keyboardService.SetZoom(zoom);
+        }
     }
 
     private void btnOpen_Click(object sender, RoutedEventArgs e)

@@ -1,4 +1,5 @@
-﻿using System.Windows.Forms;
+﻿using System.Runtime.InteropServices.Marshalling;
+using System.Windows.Controls;
 using System.Xml.Linq;
 using KidsPiano.Models;
 
@@ -88,6 +89,7 @@ public class MusicXmlParserService
                 double nextOffset = 0;
                 double? afterGraceOffset = null;
                 List<Note> notes = [];
+                List<(double, double)> gracePeriods = [];
                 foreach (var elem in m.Elements())
                 {
                     if (elem.Name == "note")
@@ -112,9 +114,13 @@ public class MusicXmlParserService
                                 offset = nextOffset;
                             }
 
-                            if (note.IsGrace && afterGraceOffset is null)
+                            if (note.IsGrace)
                             {
-                                afterGraceOffset = note.Start;
+                                if (afterGraceOffset is null)
+                                {
+                                    afterGraceOffset = note.Start;
+                                }
+                                gracePeriods.Add((note.Start, note.Duration));
                             }
                             nextOffset = note.Start + note.Duration;
                             notes.Add(note);
@@ -160,7 +166,76 @@ public class MusicXmlParserService
                     }
                 }
 
+                gracePeriods.Sort((g1, g2) => g1.CompareTo(g2));
+                List<(double, double)> combinedGracePeriods = [];
+                foreach (var (gStart, gDuration) in gracePeriods)
+                {
+                    if (combinedGracePeriods.Count > 0)
+                    {
+                        var (fStart, fDuration) = combinedGracePeriods[0];
+                        var oldEnd = fStart + fDuration;
+                        if (gStart <= oldEnd)
+                        {
+                            var newEnd = gStart + gDuration;
+                            if (newEnd > oldEnd)
+                            {
+                                combinedGracePeriods[0] = (fStart, newEnd);
+                            }
+                        }
+                        else
+                        {
+                            combinedGracePeriods.Add((gStart, gDuration));
+                        }
+                    }
+                    else
+                    {
+                        combinedGracePeriods.Add((gStart, gDuration));
+                    }
+                }
+
+                // Set actual start considering graces
+                var ic = 0;
                 notes.Sort((n1, n2) => n1.Start.CompareTo(n2.Start));
+                foreach (var n in notes)
+                {
+                    if (n.IsGrace)
+                    {
+                        n.ActualStart = n.Start;
+                    }
+                    else
+                    {
+                        for (; ic < combinedGracePeriods.Count; ic++)
+                        {
+                            var (cStart, cDuration) = combinedGracePeriods[ic];
+                            var cEnd = cStart + cDuration;
+                            if (cEnd > n.Start)
+                            {
+                                break;
+                            }
+                        }
+                        if (ic < combinedGracePeriods.Count)
+                        {
+                            // cEnd > n.Start
+                            var (cStart, cDuration) = combinedGracePeriods[ic];
+                            var oldEnd = n.Start + n.Duration;
+                            if (cStart < oldEnd)
+                            {
+                                var actualStart = Math.Min(cStart + cDuration, oldEnd);
+                                n.ActualStart = actualStart;
+                            }
+                            else
+                            {
+                                n.ActualStart = n.Start;
+                            }
+                        }
+                        else
+                        {
+                            n.ActualStart = n.Start;
+                        }
+                    }
+                }
+
+                notes.Sort((n1, n2) => n1.ActualStart.CompareTo(n2.ActualStart));
                 measure.Notes.AddRange(notes);
 
                 if (!measure.IsEmpty)
@@ -196,7 +271,7 @@ public class MusicXmlParserService
                 "whole" => 1,       // TODO verify
                 "half" => 2,
                 "quarter" => 4,
-                "8th" => 8,         // TODO verify
+                "eighth" => 8,         // TODO verify
                 "16th" => 16,       // TODO verify
                 "32nd" => 32,       // TODO verify
                 "64th" => 64,

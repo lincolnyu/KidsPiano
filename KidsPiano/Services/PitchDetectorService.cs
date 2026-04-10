@@ -1,6 +1,4 @@
 using NAudio.Wave;
-using System;
-using System.Collections.Generic;
 using System.Numerics;
 
 namespace KidsPiano.Services

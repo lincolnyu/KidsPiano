@@ -1,13 +1,5 @@
 using KidsPiano.Models;
 using NAudio.Midi;
-using NAudio.Wave;
-using NAudio.Wave.SampleProviders;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Windows;
 
 namespace KidsPiano.Services
 {
@@ -138,14 +130,14 @@ namespace KidsPiano.Services
             }
         }
 
-        class NotesComparerByStart : IComparer<Note>
+        class NotesComparerByEnd : IComparer<Note>
         {
             public int Compare(Note? x, Note? y)
             {
-                return (x.Start + x.Duration).CompareTo(y.Start + y.Duration);
+                return (x.ActualStart + x.ActualDuration).CompareTo(y.ActualStart + y.ActualDuration);
             }
 
-            public readonly static NotesComparerByStart Instance = new();
+            public readonly static NotesComparerByEnd Instance = new();
         }
 
         private async Task PlayMeasureNotes(Measure measure, double beatMs, double speed, CancellationToken token)
@@ -155,8 +147,6 @@ namespace KidsPiano.Services
             // Group notes into time slots (chord members share the same onset)
             // Notes are stored sequentially; chord members have IsChordMember = true
             var slots = new List<List<Note>>();
-            List<Note>? current = null;
-
             double currentOffset = 0;
             List<Note> notesOff = [];
             foreach (var n in measure.Notes)
@@ -166,13 +156,13 @@ namespace KidsPiano.Services
                 int velocity = (int)(Volume / 100.0 * 100 + 27); // map 0-100 → 27-127
                 velocity = Math.Clamp(velocity, 0, 127);
 
-                var nStart = n.Start;
-                while (notesOff.Count > 0 && notesOff[0].Start + notesOff[0].Duration < nStart)
+                var nStart = n.ActualStart;
+                while (notesOff.Count > 0 && notesOff[0].ActualStart + notesOff[0].ActualDuration < nStart)
                 {
                     var noteOff = notesOff[0];
-                    await WaitUntil(noteOff.Start + noteOff.Duration - currentOffset);
+                    await WaitUntil(noteOff.ActualStart + noteOff.ActualDuration - currentOffset);
 
-                    currentOffset = noteOff.Start + noteOff.Duration;
+                    currentOffset = noteOff.ActualStart + noteOff.ActualDuration;
 
                     // Note off
                     if (noteOff.MidiPitch >= 21 && noteOff.MidiPitch <= 108)
@@ -181,28 +171,28 @@ namespace KidsPiano.Services
                     notesOff.RemoveAt(0);
                 }
 
-                await WaitUntil(n.Start - currentOffset);
+                await WaitUntil(n.ActualStart - currentOffset);
 
                 // Note on
                 if (n.MidiPitch >= 21 && n.MidiPitch <= 108)
                 {
                     _midiOut.Send(MidiMessage.StartNote(n.MidiPitch, velocity, MidiChannel).RawData);
-                    var idx = notesOff.BinarySearch(n, NotesComparerByStart.Instance);
+                    var idx = notesOff.BinarySearch(n, NotesComparerByEnd.Instance);
                     if (idx < 0)
                     {
                         notesOff.Insert(-idx - 1, n);
                     }
                 }
 
-                currentOffset = n.Start;
+                currentOffset = n.ActualStart;
             }
 
             while (notesOff.Count > 0)
             {
                 var noteOff = notesOff[0];
-                await WaitUntil(noteOff.Start + noteOff.Duration - currentOffset);
+                await WaitUntil(noteOff.ActualStart + noteOff.ActualDuration - currentOffset);
 
-                currentOffset = noteOff.Start + noteOff.Duration;
+                currentOffset = noteOff.ActualStart + noteOff.ActualDuration;
 
                 // Note off
                 if (noteOff.MidiPitch >= 21 && noteOff.MidiPitch <= 108)

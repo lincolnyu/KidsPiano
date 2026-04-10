@@ -1,8 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using KidsPiano.Models;
-
 namespace KidsPiano.Services
 {
     /// <summary>

@@ -8,6 +8,10 @@ namespace KidsPiano.Models
 
         public double Start { get; set; }
 
+        public double ActualStart { get; set; }
+
+        public double ActualDuration => Start + Duration - ActualStart;
+
         public int? RawDuration { get; set; }
 
         public double Duration { get; set; }         // in beats

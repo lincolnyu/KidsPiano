@@ -9,5 +9,7 @@ public class Measure
     public int BeatsPerMeasure { get; set; } = 4;
     public int BeatType { get; set; } = 4;
 
+    public double Tempo { get; set; } = 0; // BPM; 0 = not set (caller fills forward)
+
     public bool IsEmpty => Notes.Count == 0;
 }

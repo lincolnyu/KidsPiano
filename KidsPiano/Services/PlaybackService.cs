@@ -1,3 +1,4 @@
+using KidsPiano.Models;
 using NAudio.Midi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
@@ -6,7 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using KidsPiano.Models;
+using System.Windows;
 
 namespace KidsPiano.Services
 {
@@ -115,10 +116,6 @@ namespace KidsPiano.Services
 
         private async Task PlayPiece(Piece piece, int startIndex, double speed, CancellationToken token)
         {
-            // Determine BPM (use default; later we can read tempo from MusicXML)
-            double bpm = DefaultTempo * speed;
-            double beatMs = 60000.0 / bpm;  // ms per quarter note
-
             for (int mi = startIndex; mi < piece.Measures.Count; mi++)
             {
                 token.ThrowIfCancellationRequested();
@@ -126,17 +123,29 @@ namespace KidsPiano.Services
                 var measure = piece.Measures[mi];
                 OnMeasureStarted?.Invoke(mi);
 
-                // Metronome: fire ticks at the start of each beat in this measure
-                int beats = measure.BeatsPerMeasure;
-                var metronomeTask = RunMetronomeForMeasure(beats, beatMs, token);
+                double beatMs = measure.Tempo * speed;  // ms per quarter note
+
+                //// Metronome: fire ticks at the start of each beat in this measure
+                //int beats = measure.BeatsPerMeasure;
+                //var metronomeTask = RunMetronomeForMeasure(beats, beatMs, token);
 
                 // Build note events: we need to know when each note ends
                 // Notes in MusicXML are sequential (or chords). We replay them in order.
                 await PlayMeasureNotes(measure, beatMs, speed, token);
 
                 // Wait for metronome task to complete for this measure
-                await metronomeTask;
+                //await metronomeTask;
             }
+        }
+
+        class NotesComparerByStart : IComparer<Note>
+        {
+            public int Compare(Note? x, Note? y)
+            {
+                return (x.Start + x.Duration).CompareTo(y.Start + y.Duration);
+            }
+
+            public readonly static NotesComparerByStart Instance = new();
         }
 
         private async Task PlayMeasureNotes(Measure measure, double beatMs, double speed, CancellationToken token)
@@ -148,40 +157,73 @@ namespace KidsPiano.Services
             var slots = new List<List<Note>>();
             List<Note>? current = null;
 
+            double currentOffset = 0;
+            List<Note> notesOff = [];
             foreach (var n in measure.Notes)
-            {
-                if (n.IsChordMember && current != null)
-                    current.Add(n);
-                else
-                {
-                    current = new List<Note> { n };
-                    slots.Add(current);
-                }
-            }
-
-            foreach (var slot in slots)
             {
                 token.ThrowIfCancellationRequested();
 
                 int velocity = (int)(Volume / 100.0 * 100 + 27); // map 0-100 → 27-127
                 velocity = Math.Clamp(velocity, 0, 127);
 
+                var nStart = n.Start;
+                while (notesOff.Count > 0 && notesOff[0].Start + notesOff[0].Duration < nStart)
+                {
+                    var noteOff = notesOff[0];
+                    await WaitUntil(noteOff.Start + noteOff.Duration - currentOffset);
+
+                    currentOffset = noteOff.Start + noteOff.Duration;
+
+                    // Note off
+                    if (noteOff.MidiPitch >= 21 && noteOff.MidiPitch <= 108)
+                        _midiOut.Send(MidiMessage.StopNote(noteOff.MidiPitch, 0, MidiChannel).RawData);
+
+                    notesOff.RemoveAt(0);
+                }
+
+                await WaitUntil(n.Start - currentOffset);
+
                 // Note on
-                foreach (var n in slot)
-                    if (n.MidiPitch >= 21 && n.MidiPitch <= 108)
-                        _midiOut.Send(MidiMessage.StartNote(n.MidiPitch, velocity, MidiChannel).RawData);
+                if (n.MidiPitch >= 21 && n.MidiPitch <= 108)
+                {
+                    _midiOut.Send(MidiMessage.StartNote(n.MidiPitch, velocity, MidiChannel).RawData);
+                    var idx = notesOff.BinarySearch(n, NotesComparerByStart.Instance);
+                    if (idx < 0)
+                    {
+                        notesOff.Insert(-idx - 1, n);
+                    }
+                }
 
-                // Duration = shortest note in chord (they should all be the same in practice)
-                double durationBeats = slot.Min(n => n.Duration);
-                int durationMs = (int)(durationBeats * beatMs);
-                durationMs = Math.Max(durationMs, 50);
+                currentOffset = n.Start;
+            }
 
-                await Task.Delay(durationMs, token);
+            while (notesOff.Count > 0)
+            {
+                var noteOff = notesOff[0];
+                await WaitUntil(noteOff.Start + noteOff.Duration - currentOffset);
+
+                currentOffset = noteOff.Start + noteOff.Duration;
 
                 // Note off
-                foreach (var n in slot)
-                    if (n.MidiPitch >= 21 && n.MidiPitch <= 108)
-                        _midiOut.Send(MidiMessage.StopNote(n.MidiPitch, 0, MidiChannel).RawData);
+                if (noteOff.MidiPitch >= 21 && noteOff.MidiPitch <= 108)
+                    _midiOut.Send(MidiMessage.StopNote(noteOff.MidiPitch, 0, MidiChannel).RawData);
+
+                notesOff.RemoveAt(0);
+            }
+
+            double DurationToMs(double duration)
+            {
+                return duration * beatMs;
+            }
+
+            async Task WaitUntil(double delay)
+            {
+                var delayMs = (int)DurationToMs(delay);
+                delayMs *= 5;
+                if (delayMs > 50)
+                {
+                    await Task.Delay(delayMs, token);
+                }
             }
         }
 

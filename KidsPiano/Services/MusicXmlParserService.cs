@@ -123,7 +123,12 @@ public class MusicXmlParserService
                                 gracePeriods.Add((note.Start, note.Duration));
                             }
                             nextOffset = note.Start + note.Duration;
-                            notes.Add(note);
+                            if (note.MidiPitch >= 0)
+                            {
+                                // NOT to add the rest
+                                // Rests are returned to factor in the durations
+                                notes.Add(note);
+                            }
                         }
                     }
                     else if (elem.Name == "forward")
@@ -297,10 +302,31 @@ public class MusicXmlParserService
 
     private XElement? FindFirstPianoPart(XDocument doc)
     {
+        HashSet<string> pianoParts = [];
+        XElement? partlist = doc.Descendants("part-list").FirstOrDefault();
+        if (partlist != null)
+        {
+            pianoParts = partlist.Elements("score-part").Where(scorePart =>
+            {
+                var partName = scorePart.Element("part-name")?.Value?.ToLower();
+                var scoreInstrument = scorePart.Element("score-instrument");
+                var instrumentName = scoreInstrument?.Element("instrument-name")?.Value?.ToLower();
+                var instrumentSound = scoreInstrument?.Element("instrument-sound")?.Value?.ToLower();
+                return partName?.Contains("piano") == true || instrumentName?.Contains("piano") == true || instrumentSound?.Contains("piano") == true;
+            }).Select(x=>x.Attribute("id")?.Value).Where(x=>x is not null).Select(x=>x!).ToHashSet();
+        }
+
         return doc.Descendants("part")
             .FirstOrDefault(p =>
-                p.Attribute("id")?.Value?.ToLower().Contains("piano") == true ||
-                p.Elements("measure").Elements("note").Any());
+            {
+                var id = p.Attribute("id")?.Value;
+                if (pianoParts.Count > 0 && id is not null)
+                {
+                    return pianoParts.Contains(id);
+                }
+                return id?.ToLower().Contains("piano") == true ||
+                p.Element("part-name")?.Value?.ToLower().Contains("piano") == true;
+            }, doc.Descendants("part").FirstOrDefault(p=> p.Elements("measure").Elements("note").Any()));
     }
 
     private XElement? FindFirstPart(XDocument doc) =>
@@ -321,21 +347,28 @@ public class MusicXmlParserService
         try
         {
             var pitchElem = noteElem.Element("pitch");
-            if (pitchElem == null) return null; // rest or non-pitched
+            //  if (pitchElem == null) return null; // rest or non-pitched
 
-            var step = pitchElem.Element("step")?.Value ?? "C";
-            if (!int.TryParse(pitchElem.Element("octave")?.Value, out var octave)) return null;
+            int midiPitch = -1;
+            string? step = null;
+            int octave = -1;
 
-            // Accidental from <alter> (semitones, can be -1, 0, 1)
-            int alter = 0;
-            if (int.TryParse(pitchElem.Element("alter")?.Value, out var a)) alter = a;
+            if (pitchElem is not null)
+            {
+                step = pitchElem.Element("step")?.Value ?? "C";
+                if (!int.TryParse(pitchElem.Element("octave")?.Value, out octave)) return null;
 
-            string[] naturalSteps = { "C", "D", "E", "F", "G", "A", "B" };
-            int[] naturalOffsets = { 0, 2, 4, 5, 7, 9, 11 };
-            var naturalStepIndex = Array.IndexOf(naturalSteps, step);
-            if (naturalStepIndex == -1) naturalStepIndex = 0;
+                // Accidental from <alter> (semitones, can be -1, 0, 1)
+                int alter = 0;
+                if (int.TryParse(pitchElem.Element("alter")?.Value, out var a)) alter = a;
 
-            int midiPitch = (octave + 1) * 12 + naturalOffsets[naturalStepIndex] + alter;
+                string[] naturalSteps = { "C", "D", "E", "F", "G", "A", "B" };
+                int[] naturalOffsets = { 0, 2, 4, 5, 7, 9, 11 };
+                var naturalStepIndex = Array.IndexOf(naturalSteps, step);
+                if (naturalStepIndex == -1) naturalStepIndex = 0;
+
+                midiPitch = (octave + 1) * 12 + naturalOffsets[naturalStepIndex] + alter;
+            }
 
             var type = noteElem.Element("type")?.Value;
             var isGrace = noteElem.Element("grace") is not null;

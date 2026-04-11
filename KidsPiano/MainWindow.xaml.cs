@@ -150,6 +150,11 @@ public partial class MainWindow : Window
     {
         if (_currentPiece == null || _currentPiece.Measures.Count == 0) return;
 
+        if (_currentMeasureIndex >= _currentPiece.Measures.Count)
+        {
+            _currentMeasureIndex = 0;
+        }
+
         var measure = _currentPiece.Measures[_currentMeasureIndex];
         var expectedPitches = measure.Notes.Select(n => n.MidiPitch).Distinct().ToList();
 

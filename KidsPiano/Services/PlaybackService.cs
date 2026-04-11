@@ -115,7 +115,10 @@ namespace KidsPiano.Services
                 var measure = piece.Measures[mi];
                 OnMeasureStarted?.Invoke(mi);
 
-                double beatMs = measure.Tempo * speed;  // ms per quarter note
+                // tempo is the number of quarter notes (beats) / minute
+                // each minute there are `tempo` beats
+                // each beat takes 60/tempo secs = 60000 ms / tempo
+                double beatMs = (60000 / measure.Tempo) * speed;
 
                 //// Metronome: fire ticks at the start of each beat in this measure
                 //int beats = measure.BeatsPerMeasure;
@@ -209,7 +212,6 @@ namespace KidsPiano.Services
             async Task WaitUntil(double delay)
             {
                 var delayMs = (int)DurationToMs(delay);
-                delayMs *= 5;
                 if (delayMs > 50)
                 {
                     await Task.Delay(delayMs, token);

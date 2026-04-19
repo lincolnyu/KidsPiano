@@ -288,7 +288,9 @@ public partial class MainWindow : Window
     private void SpeedButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button btn && double.TryParse(btn.Tag?.ToString(), out var speed))
+        {
             _currentSpeed = speed;
+        }
     }
 
     private void btnPlayPause_Click(object sender, RoutedEventArgs e)

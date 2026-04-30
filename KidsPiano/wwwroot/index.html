@@ -111,8 +111,11 @@
             if (!measure) return;
             const staffEntries = measure.VerticalSourceStaffEntryContainers || [];
             for (const vsec of staffEntries) {
+                if (!vsec) continue;
                 for (const staffEntry of (vsec.StaffEntries || [])) {
+                    if (!staffEntry) continue;
                     for (const voiceEntry of (staffEntry.VoiceEntries || [])) {
+                        if (!voiceEntry) continue;
                         for (const note of (voiceEntry.Notes || [])) {
                             let color = defaultColor;
                             if (colorMap) {

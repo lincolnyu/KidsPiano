@@ -1,176 +1,188 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Kids Piano Score</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; background: #ffffff; overflow: hidden; }
-    #osmdContainer {
-      width: 100%;
-      height: 100%;
-      overflow-y: auto;
-      overflow-x: hidden;
-    }
-    #statusMsg {
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      font-family: 'Segoe UI', sans-serif;
-      font-size: 28px;
-      color: #666;
-    }
-  </style>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kids Piano Score</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            background: #ffffff;
+            overflow: hidden;
+        }
+
+        #osmdContainer {
+            width: 100%;
+            height: 100%;
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        #statusMsg {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: 'Segoe UI', sans-serif;
+            font-size: 28px;
+            color: #666;
+        }
+    </style>
 </head>
 <body>
-  <div id="statusMsg">Open a MusicXML file to begin 🎵</div>
-  <div id="osmdContainer"></div>
+    <div id="statusMsg">Open a MusicXML file to begin 🎵</div>
+    <div id="osmdContainer"></div>
 
-  <!-- OpenSheetMusicDisplay from CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.6/build/opensheetmusicdisplay.min.js"></script>
+    <!-- OpenSheetMusicDisplay from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.6/build/opensheetmusicdisplay.min.js"></script>
 
-  <script>
-    let osmd = null;
-    let currentMeasureIndex = 0;  // 0-based
+    <script>
+        let osmd = null;
+        let currentMeasureIndex = 0;  // 0-based
 
-    // ── Initialise OSMD ───────────────────────────────────────────────────────
-    function initOsmd() {
-      osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay('osmdContainer', {
-        autoResize: true,
-        drawTitle: false,             // title shown in WPF bar
-        drawSubtitle: false,
-        drawComposer: false,
-        drawCredits: false,
-        followCursor: true,
-        drawingParameters: 'default',
-      });
-    }
-
-    // ── Load score (called from C# via ExecuteScriptAsync) ────────────────────
-    async function loadScore(musicXmlString) {
-      try {
-        document.getElementById('statusMsg').style.display = 'none';
-        if (!osmd) initOsmd();
-        await osmd.load(musicXmlString);
-        osmd.render();
-        currentMeasureIndex = 0;
-        highlightMeasure(0);
-        return { ok: true };
-      } catch (e) {
-        console.error('OSMD load error:', e);
-        document.getElementById('statusMsg').textContent = 'Error loading score: ' + e.message;
-        document.getElementById('statusMsg').style.display = 'block';
-        return { ok: false, error: e.message };
-      }
-    }
-
-    // ── Highlight a specific measure (0-based) ────────────────────────────────
-    function highlightMeasure(measureIndex) {
-      if (!osmd || !osmd.Sheet) return;
-      currentMeasureIndex = measureIndex;
-
-      // Reset all note colours
-      clearHighlights();
-
-      const measures = osmd.Sheet.SourceMeasures;
-      if (!measures || measureIndex >= measures.length) return;
-
-      const measure = measures[measureIndex];
-      if (!measure) return;
-
-      // Colour all notes in this measure with the "current" highlight colour
-      highlightMeasureNotes(measure, '#2196F3'); // blue = current position
-
-      // Scroll so measure is visible
-      try {
-        const staffMeasure = osmd.GraphicSheet?.MeasureList?.[measureIndex]?.[0];
-        if (staffMeasure) {
-          const el = staffMeasure.SVGElement;
-          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        // ── Initialise OSMD ───────────────────────────────────────────────────────
+        function initOsmd() {
+            osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay('osmdContainer', {
+                autoResize: true,
+                drawTitle: false,             // title shown in WPF bar
+                drawSubtitle: false,
+                drawComposer: false,
+                drawCredits: false,
+                followCursor: true,
+                drawingParameters: 'default',
+            });
         }
-      } catch (_) {}
-    }
 
-    // Colour notes in a measure. colorMap: null = use defaultColor for all,
-    // or Map<midiPitch, cssColor> for per-note colouring.
-    function highlightMeasureNotes(measure, defaultColor, colorMap) {
-      if (!measure) return;
-      const staffEntries = measure.VerticalSourceStaffEntryContainers || [];
-      for (const vsec of staffEntries) {
-        for (const staffEntry of (vsec.StaffEntries || [])) {
-          for (const voiceEntry of (staffEntry.VoiceEntries || [])) {
-            for (const note of (voiceEntry.Notes || [])) {
-              let color = defaultColor;
-              if (colorMap) {
-                const midi = noteToMidi(note);
-                color = colorMap.get(midi) || defaultColor;
-              }
-              setNoteColor(note, color);
+        // ── Load score (called from C# via ExecuteScriptAsync) ────────────────────
+        async function loadScore(musicXmlString) {
+            try {
+                document.getElementById('statusMsg').style.display = 'none';
+                if (!osmd) initOsmd();
+                await osmd.load(musicXmlString);
+                osmd.render();
+                currentMeasureIndex = 0;
+                highlightMeasure(0);
+                return { ok: true };
+            } catch (e) {
+                console.error('OSMD load error:', e);
+                document.getElementById('statusMsg').textContent = 'Error loading score: ' + e.message;
+                document.getElementById('statusMsg').style.display = 'block';
+                return { ok: false, error: e.message };
             }
-          }
         }
-      }
-      // Re-render just the changed notes
-      try { osmd.render(); } catch (_) {}
-    }
 
-    function setNoteColor(note, color) {
-      if (!note) return;
-      try {
-        note.NoteheadColor = color;
-        note.coloringMode = opensheetmusicdisplay.ColoringModes.CustomColorSet;
-      } catch (_) {}
-    }
+        // ── Highlight a specific measure (0-based) ────────────────────────────────
+        function highlightMeasure(measureIndex) {
+            if (!osmd || !osmd.Sheet) return;
+            currentMeasureIndex = measureIndex;
 
-    function clearHighlights() {
-      if (!osmd?.Sheet?.SourceMeasures) return;
-      for (const measure of osmd.Sheet.SourceMeasures) {
-        highlightMeasureNotes(measure, '#000000');
-      }
-    }
+            // Reset all note colours
+            clearHighlights();
 
-    // ── Per-note status colouring (from C# player-led tracking) ─────────────
-    // statusMap: JSON object { "<midiPitch>": "green"|"orange"|"red" }
-    function updateNoteColors(measureIndex, statusMapJson) {
-      if (!osmd?.Sheet) return;
-      const raw = typeof statusMapJson === 'string' ? JSON.parse(statusMapJson) : statusMapJson;
-      const colorMap = new Map();
-      for (const [pitch, status] of Object.entries(raw)) {
-        const color = status === 'green' ? '#4CAF50'
+            const measures = osmd.Sheet.SourceMeasures;
+            if (!measures || measureIndex >= measures.length) return;
+
+            const measure = measures[measureIndex];
+            if (!measure) return;
+
+            // Colour all notes in this measure with the "current" highlight colour
+            highlightMeasureNotes(measure, '#2196F3'); // blue = current position
+
+            // Scroll so measure is visible
+            try {
+                const staffMeasure = osmd.GraphicSheet?.MeasureList?.[measureIndex]?.[0];
+                if (staffMeasure) {
+                    const el = staffMeasure.SVGElement;
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+            } catch (_) { }
+        }
+
+        // Colour notes in a measure. colorMap: null = use defaultColor for all,
+        // or Map<midiPitch, cssColor> for per-note colouring.
+        function highlightMeasureNotes(measure, defaultColor, colorMap) {
+            if (!measure) return;
+            const staffEntries = measure.VerticalSourceStaffEntryContainers || [];
+            for (const vsec of staffEntries) {
+                for (const staffEntry of (vsec.StaffEntries || [])) {
+                    for (const voiceEntry of (staffEntry.VoiceEntries || [])) {
+                        for (const note of (voiceEntry.Notes || [])) {
+                            let color = defaultColor;
+                            if (colorMap) {
+                                const midi = noteToMidi(note);
+                                color = colorMap.get(midi) || defaultColor;
+                            }
+                            setNoteColor(note, color);
+                        }
+                    }
+                }
+            }
+            // Re-render just the changed notes
+            try { osmd.render(); } catch (_) { }
+        }
+
+        function setNoteColor(note, color) {
+            if (!note) return;
+            try {
+                note.NoteheadColor = color;
+                note.coloringMode = opensheetmusicdisplay.ColoringModes.CustomColorSet;
+            } catch (_) { }
+        }
+
+        function clearHighlights() {
+            if (!osmd?.Sheet?.SourceMeasures) return;
+            for (const measure of osmd.Sheet.SourceMeasures) {
+                highlightMeasureNotes(measure, '#000000');
+            }
+        }
+
+        // ── Per-note status colouring (from C# player-led tracking) ─────────────
+        // statusMap: JSON object { "<midiPitch>": "green"|"orange"|"red" }
+        function updateNoteColors(measureIndex, statusMapJson) {
+            if (!osmd?.Sheet) return;
+            const raw = typeof statusMapJson === 'string' ? JSON.parse(statusMapJson) : statusMapJson;
+            const colorMap = new Map();
+            for (const [pitch, status] of Object.entries(raw)) {
+                const color = status === 'green' ? '#4CAF50'
                     : status === 'orange' ? '#FF9800'
-                    : status === 'red'    ? '#F44336'
-                    : '#2196F3';
-        colorMap.set(parseInt(pitch, 10), color);
-      }
-      const measure = osmd.Sheet.SourceMeasures[measureIndex];
-      if (measure) highlightMeasureNotes(measure, '#2196F3', colorMap);
-    }
+                        : status === 'red' ? '#F44336'
+                            : '#2196F3';
+                colorMap.set(parseInt(pitch, 10), color);
+            }
+            const measure = osmd.Sheet.SourceMeasures[measureIndex];
+            if (measure) highlightMeasureNotes(measure, '#2196F3', colorMap);
+        }
 
-    // ── Utility: note object → MIDI pitch ─────────────────────────────────────
-    function noteToMidi(note) {
-      try {
-        const p = note.Pitch;
-        if (!p) return -1;
-        const steps = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
-        const base = steps[p.FundamentalNote?.charAt(0)] ?? 0;
-        const alter = p.Accidental?.HalfTones ?? 0;
-        return (p.Octave + 1) * 12 + base + alter;
-      } catch (_) { return -1; }
-    }
+        // ── Utility: note object → MIDI pitch ─────────────────────────────────────
+        function noteToMidi(note) {
+            try {
+                const p = note.Pitch;
+                if (!p) return -1;
+                const steps = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+                const base = steps[p.FundamentalNote?.charAt(0)] ?? 0;
+                const alter = p.Accidental?.HalfTones ?? 0;
+                return (p.Octave + 1) * 12 + base + alter;
+            } catch (_) { return -1; }
+        }
 
-    // ── C# interop helpers ────────────────────────────────────────────────────
-    // These are called via ExecuteScriptAsync from C#.
-    // They all return JSON strings so C# can parse the result safely.
+        // ── C# interop helpers ────────────────────────────────────────────────────
+        // These are called via ExecuteScriptAsync from C#.
+        // They all return JSON strings so C# can parse the result safely.
 
-    window.loadScore       = loadScore;
-    window.highlightMeasure = highlightMeasure;
-    window.updateNoteColors = updateNoteColors;
-    window.clearHighlights  = clearHighlights;
+        window.loadScore = loadScore;
+        window.highlightMeasure = highlightMeasure;
+        window.updateNoteColors = updateNoteColors;
+        window.clearHighlights = clearHighlights;
 
-    // Ready signal
-    window.chrome?.webview?.postMessage(JSON.stringify({ type: 'ready' }));
-  </script>
+        // Ready signal
+        window.chrome?.webview?.postMessage(JSON.stringify({ type: 'ready' }));
+    </script>
 </body>
 </html>

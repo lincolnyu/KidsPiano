@@ -268,6 +268,9 @@ public partial class MainWindow : Window
         {
             _currentMeasureIndex = measureIndex;
             RefreshCurrentMeasure();
+
+            _expectedKeys.Clear();
+            _keyboardService.UpdateExpectedNotes(_expectedKeys);
         });
     }
 
@@ -295,9 +298,10 @@ public partial class MainWindow : Window
         {
             _isPlaying = false;
             btnPlayPause.Content = "▶ Play";
-        });
 
-        _expectedKeys.Clear();
+            _expectedKeys.Clear();
+            _keyboardService.UpdateExpectedNotes(_expectedKeys);
+        });
     }
 
     // ── UI event handlers ──────────────────────────────────────────────────────

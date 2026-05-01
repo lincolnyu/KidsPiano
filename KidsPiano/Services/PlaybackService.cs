@@ -168,10 +168,7 @@ public class PlaybackService : IDisposable
 
                 var noteOffEnd = notesOff[0].ActualStart + notesOff[0].ActualDuration;
 
-                if (noteOffEnd > n.ActualStart)
-                {
-                    break;
-                }
+                if (noteOffEnd > n.ActualStart) break;
 
                 await WaitUntil(noteOffEnd - currentOffset);
 
@@ -181,10 +178,8 @@ public class PlaybackService : IDisposable
                 if (noteOff.MidiPitch is >= 21 and <= 108)
                 {
                     if (n.ActualStart > currentOffset || n.MidiPitch != noteOff.MidiPitch)
-                    {
                         // Only send note off if the next note isn't starting at the same time with the same pitch (i.e. a repeated note)
                         _midiOut.Send(MidiMessage.StopNote(noteOff.MidiPitch, 0, MidiChannel).RawData);
-                    }
                     OnNoteChanged?.Invoke(noteOff.MidiPitch, false);
                 }
 

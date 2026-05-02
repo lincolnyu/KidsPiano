@@ -11,40 +11,40 @@ namespace KidsPiano;
 
 public partial class MainWindow : Window
 {
-    // ── Services ───────────────────────────────────────────────────────────────
-    private readonly MusicXmlParserService   _parser          = new();
+    private readonly HashSet<int> _expectedKeys = [];
     private readonly KeyboardVisualizerService _keyboardService;
-    private readonly PitchDetectorService    _pitchDetector;
-    private readonly PlaybackService         _playback;
-    private readonly TrackingService         _tracking        = new();
+
+    // ── Services ───────────────────────────────────────────────────────────────
+    private readonly MusicXmlParserService _parser = new();
+    private readonly PitchDetectorService _pitchDetector;
+    private readonly PlaybackService _playback;
+    private readonly TrackingService _tracking = new();
+    private int _currentMeasureIndex;
 
     // ── State ──────────────────────────────────────────────────────────────────
-    private string  _currentMusicXmlContent = string.Empty;
-    private Piece?  _currentPiece;
-    private double  _currentSpeed           = 1.0;
-    private bool    _isPlaying;
-    private string  _lastFolder             = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-    private int     _currentMeasureIndex    = 0;
-    private bool    _webViewReady           = false;
-
-    // Whether we are in player-led mode (false = app-led)
-    private bool IsPlayerLed => cmbMode.SelectedIndex == 1;
+    private string _currentMusicXmlContent = string.Empty;
+    private Piece? _currentPiece;
+    private double _currentSpeed = 1.0;
+    private bool _isPlaying;
+    private string _lastFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    private bool _webViewReady;
 
     public MainWindow()
     {
         InitializeComponent();
 
         _keyboardService = new KeyboardVisualizerService(canvasKeyboard);
-        _pitchDetector   = new PitchDetectorService(OnNotesDetected);
-        _playback        = new PlaybackService();
+        _pitchDetector = new PitchDetectorService(OnNotesDetected);
+        _playback = new PlaybackService();
 
         // Playback events
-        _playback.OnMeasureStarted    += OnPlaybackMeasureStarted;
-        _playback.OnPlaybackFinished  += OnPlaybackFinished;
+        _playback.OnMeasureStarted += OnPlaybackMeasureStarted;
+        _playback.OnPlaybackFinished += OnPlaybackFinished;
+        _playback.OnNoteChanged += OnPlaybackNoteChange;
 
         // Tracking events
-        _tracking.OnChordAccepted     += OnChordAccepted;
-        _tracking.OnRepeatSegment     += OnRepeatSegment;
+        _tracking.OnChordAccepted += OnChordAccepted;
+        _tracking.OnRepeatSegment += OnRepeatSegment;
         _tracking.OnNoteColorsChanged += OnTrackingNoteColorsChanged;
 
         Loaded += MainWindow_Loaded;
@@ -54,6 +54,9 @@ public partial class MainWindow : Window
             _playback.Dispose();
         };
     }
+
+    // Whether we are in player-led mode (false = app-led)
+    private bool IsPlayerLed => cmbMode.SelectedIndex == 1;
 
     // ── Init ───────────────────────────────────────────────────────────────────
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -68,11 +71,13 @@ public partial class MainWindow : Window
     {
         try
         {
-            var json = System.Text.Json.JsonDocument.Parse(e.TryGetWebMessageAsString());
+            var json = JsonDocument.Parse(e.TryGetWebMessageAsString());
             if (json.RootElement.TryGetProperty("type", out var t) && t.GetString() == "ready")
                 _webViewReady = true;
         }
-        catch { }
+        catch
+        {
+        }
     }
 
     // ── File open ──────────────────────────────────────────────────────────────
@@ -80,7 +85,7 @@ public partial class MainWindow : Window
     {
         var dlg = new OpenFileDialog
         {
-            Filter          = "MusicXML files (*.musicxml;*.xml)|*.musicxml;*.xml|MIDI files (*.mid)|*.mid|All files (*.*)|*.*",
+            Filter = "MusicXML files (*.musicxml;*.xml)|*.musicxml;*.xml|MIDI files (*.mid)|*.mid|All files (*.*)|*.*",
             InitialDirectory = _lastFolder
         };
 
@@ -99,13 +104,13 @@ public partial class MainWindow : Window
         if (!string.IsNullOrEmpty(warning))
         {
             if (warning.StartsWith("Invalid"))
-                MessageBox.Show(warning, "Error",   MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(warning, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             else
                 MessageBox.Show(warning, "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
-        txtSongName.Text     = piece.Title;
-        _currentPiece        = piece;
+        txtSongName.Text = piece.Title;
+        _currentPiece = piece;
         _currentMeasureIndex = 0;
         _currentMusicXmlContent = File.ReadAllText(filePath);
 
@@ -125,7 +130,7 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrEmpty(_currentMusicXmlContent)) return;
 
-        string htmlPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot", "index.html");
+        var htmlPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot", "index.html");
         if (!File.Exists(htmlPath))
         {
             MessageBox.Show("wwwroot/index.html not found.", "Error",
@@ -137,10 +142,10 @@ public partial class MainWindow : Window
         await Task.Delay(1500); // Wait for OSMD JS to load
 
         // Escape the XML so it can be passed as a JS template literal
-        string escaped = _currentMusicXmlContent
+        var escaped = _currentMusicXmlContent
             .Replace("\\", "\\\\")
-            .Replace("`",  "\\`")
-            .Replace("$",  "\\$");
+            .Replace("`", "\\`")
+            .Replace("$", "\\$");
 
         await webViewScore.CoreWebView2.ExecuteScriptAsync($"loadScore(`{escaped}`)");
     }
@@ -150,26 +155,23 @@ public partial class MainWindow : Window
     {
         if (_currentPiece == null || _currentPiece.Measures.Count == 0) return;
 
-        if (_currentMeasureIndex >= _currentPiece.Measures.Count)
-        {
-            _currentMeasureIndex = 0;
-        }
+        if (_currentMeasureIndex >= _currentPiece.Measures.Count) _currentMeasureIndex = 0;
 
         var measure = _currentPiece.Measures[_currentMeasureIndex];
-        var expectedPitches = measure.Notes.Select(n => n.MidiPitch).Distinct().ToList();
+        //var expectedPitches = measure.Notes.Select(n => n.MidiPitch).Distinct().ToList();
 
-        // Update keyboard expected keys
-        _keyboardService.UpdateExpectedNotes(expectedPitches);
+        //// Update keyboard expected keys
+        //_keyboardService.UpdateExpectedNotes(expectedPitches);
 
-        // Auto-center keyboard on expected note range
-        if (expectedPitches.Count > 0)
-            _keyboardService.CenterOnNotes(expectedPitches);
+        //// Auto-center keyboard on expected note range
+        //if (expectedPitches.Count > 0)
+        //    _keyboardService.CenterOnNotes(expectedPitches);
 
         // Update OSMD highlight
         _ = HighlightMeasureInScore(_currentMeasureIndex);
 
         // Set expected pitches for tracking
-        _tracking.SetExpectedPitches(expectedPitches);
+        //_tracking.SetExpectedPitches(expectedPitches);
     }
 
     private async Task HighlightMeasureInScore(int measureIndex)
@@ -180,7 +182,9 @@ public partial class MainWindow : Window
             await webViewScore.CoreWebView2.ExecuteScriptAsync(
                 $"highlightMeasure({measureIndex})");
         }
-        catch { }
+        catch
+        {
+        }
     }
 
     // ── Pitch detection callback ───────────────────────────────────────────────
@@ -227,10 +231,10 @@ public partial class MainWindow : Window
         if (_currentPiece == null) return;
         var measure = _currentPiece.Measures[_currentMeasureIndex];
         var expected = measure.Notes.Select(n => n.MidiPitch).Distinct().ToList();
-        var played   = playedColors.Keys.ToList();
+        var played = playedColors.Keys.ToList();
 
         var scoreMap = TrackingService.BuildScoreColorMap(played, expected, _tracking.Tolerance);
-        var json     = JsonSerializer.Serialize(scoreMap);
+        var json = JsonSerializer.Serialize(scoreMap);
 
         Dispatcher.Invoke(async () =>
         {
@@ -264,6 +268,27 @@ public partial class MainWindow : Window
         {
             _currentMeasureIndex = measureIndex;
             RefreshCurrentMeasure();
+
+            _expectedKeys.Clear();
+            _keyboardService.UpdateExpectedNotes(_expectedKeys);
+        });
+    }
+
+    private void OnPlaybackNoteChange(int midiPitch, bool on)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            if (on)
+                _expectedKeys.Add(midiPitch);
+            else
+                _expectedKeys.Remove(midiPitch);
+
+            // Update keyboard expected keys
+            _keyboardService.UpdateExpectedNotes(_expectedKeys);
+
+            // Auto-center keyboard on expected note range
+            if (_expectedKeys.Count > 0)
+                _keyboardService.CenterOnNotes(_expectedKeys);
         });
     }
 
@@ -273,6 +298,9 @@ public partial class MainWindow : Window
         {
             _isPlaying = false;
             btnPlayPause.Content = "▶ Play";
+
+            _expectedKeys.Clear();
+            _keyboardService.UpdateExpectedNotes(_expectedKeys);
         });
     }
 
@@ -281,7 +309,7 @@ public partial class MainWindow : Window
     private void cmbZoom_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (cmbZoom.SelectedItem is ComboBoxItem item &&
-            int.TryParse(item.Tag?.ToString(), out int zoom))
+            int.TryParse(item.Tag?.ToString(), out var zoom))
             _keyboardService?.SetZoom(zoom);
     }
 
@@ -304,7 +332,7 @@ public partial class MainWindow : Window
         {
             // Player-led: pause/resume tracking
             if (_isPlaying) _tracking.Resume();
-            else            _tracking.Pause();
+            else _tracking.Pause();
         }
         else
         {
@@ -398,5 +426,4 @@ public partial class MainWindow : Window
             _tracking.Pause();
         }
     }
-
 }

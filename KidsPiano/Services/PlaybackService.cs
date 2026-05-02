@@ -194,7 +194,11 @@ public class PlaybackService : IDisposable
                 _midiOut.Send(MidiMessage.StartNote(n.MidiPitch, velocity, MidiChannel).RawData);
                 OnNoteChanged?.Invoke(n.MidiPitch, true);
                 var idx = notesOff.BinarySearch(n, NotesComparerByEnd.Instance);
-                if (idx < 0) notesOff.Insert(-idx - 1, n);
+                if (idx < 0)
+                {
+                    idx = -idx - 1;
+                }
+                notesOff.Insert(idx, n);
             }
 
             currentOffset = n.ActualStart;

@@ -11,7 +11,6 @@ namespace KidsPiano;
 
 public partial class MainWindow : Window
 {
-    private readonly HashSet<int> _expectedKeys = [];
     private readonly KeyboardVisualizerService _keyboardService;
 
     // ── Services ───────────────────────────────────────────────────────────────
@@ -269,8 +268,7 @@ public partial class MainWindow : Window
             _currentMeasureIndex = measureIndex;
             RefreshCurrentMeasure();
 
-            _expectedKeys.Clear();
-            _keyboardService.UpdateExpectedNotes(_expectedKeys);
+            // Although it's a good practice to clear the expectedKeys here, we leave it to note off.
         });
     }
 
@@ -278,17 +276,16 @@ public partial class MainWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
-            if (on)
-                _expectedKeys.Add(midiPitch);
-            else
-                _expectedKeys.Remove(midiPitch);
-
             // Update keyboard expected keys
-            _keyboardService.UpdateExpectedNotes(_expectedKeys);
+            _keyboardService.UpdateExpectedNotes(expectedNotes =>
+            {
+                if (on) expectedNotes.Add(midiPitch);
+                else expectedNotes.Remove(midiPitch);
 
-            // Auto-center keyboard on expected note range
-            if (_expectedKeys.Count > 0)
-                _keyboardService.CenterOnNotes(_expectedKeys);
+                // Auto-center keyboard on expected note range
+                if (expectedNotes.Count > 0)
+                    _keyboardService.CenterOnNotes(expectedNotes);
+            });
         });
     }
 
@@ -299,8 +296,10 @@ public partial class MainWindow : Window
             _isPlaying = false;
             btnPlayPause.Content = "▶ Play";
 
-            _expectedKeys.Clear();
-            _keyboardService.UpdateExpectedNotes(_expectedKeys);
+            _keyboardService.UpdateExpectedNotes(expectedNotes =>
+            {
+                expectedNotes.Clear();
+            });
         });
     }
 

@@ -168,13 +168,12 @@ public class KeyboardVisualizerService
     }
 
     // ── Expected notes ────────────────────────────────────────────────────────
-    public void UpdateExpectedNotes(IEnumerable<int> expectedPitches)
+    public void UpdateExpectedNotes(Action<HashSet<int>> changeNoteSet)
     {
-        _state.ExpectedNotes.Clear();
-        foreach (var p in expectedPitches)
-            _state.ExpectedNotes.Add(p);
+        changeNoteSet(_state.ExpectedNotes);
         RefreshKeyColors();
     }
+
 
     private void RefreshKeyColors()
     {
@@ -237,7 +236,4 @@ public class KeyboardVisualizerService
             _playedCircles.Add(circle);
         }
     }
-
-    // Legacy test helper
-    public void TestExpectedNotes() => UpdateExpectedNotes(new[] { 60, 64, 67 });
 }

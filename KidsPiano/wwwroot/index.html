@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Kids Piano Score</title>
     <style>
         * {
@@ -37,13 +37,13 @@
     </style>
 </head>
 <body>
-    <div id="statusMsg">Open a MusicXML file to begin 🎵</div>
-    <div id="osmdContainer"></div>
+<div id="statusMsg">Open a MusicXML file to begin 🎵</div>
+<div id="osmdContainer"></div>
 
-    <!-- OpenSheetMusicDisplay from CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.6/build/opensheetmusicdisplay.min.js"></script>
+<!-- OpenSheetMusicDisplay from CDN -->
+<script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.6/build/opensheetmusicdisplay.min.js"></script>
 
-    <script>
+<script>
         let osmd = null;
         let currentMeasureIndex = 0;  // 0-based
 
@@ -79,30 +79,32 @@
         }
 
         // ── Highlight a specific measure (0-based) ────────────────────────────────
+        let lastHighlightedMeasure = 0;
         function highlightMeasure(measureIndex) {
-            if (!osmd || !osmd.Sheet) return;
+            if (!osmd?.Sheet) return;
+
             currentMeasureIndex = measureIndex;
-
-            // Reset all note colours
-            clearHighlights();
-
+            // Only reset the previous measure (much faster)
+            if (lastHighlightedMeasure !== measureIndex) {
+                const prevMeasure = osmd.Sheet.SourceMeasures[lastHighlightedMeasure];
+                if (prevMeasure) highlightMeasureNotes(prevMeasure, '#000000');
+            }
             const measures = osmd.Sheet.SourceMeasures;
-            if (!measures || measureIndex >= measures.length) return;
-
+            if (measureIndex >= measures.length) return;
             const measure = measures[measureIndex];
             if (!measure) return;
-
-            // Colour all notes in this measure with the "current" highlight colour
-            highlightMeasureNotes(measure, '#2196F3'); // blue = current position
-
-            // Scroll so measure is visible
+            highlightMeasureNotes(measure, '#2196F3'); // blue = current
+            // Scroll with less delay
             try {
                 const staffMeasure = osmd.GraphicSheet?.MeasureList?.[measureIndex]?.[0];
-                if (staffMeasure) {
-                    const el = staffMeasure.SVGElement;
-                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                if (staffMeasure?.SVGElement) {
+                    staffMeasure.SVGElement.scrollIntoView({
+                        behavior: 'auto',     // 'smooth' → 'auto' for snappier feel
+                        block: 'nearest'
+                    });
                 }
             } catch (_) { }
+            lastHighlightedMeasure = measureIndex;
         }
 
         // Colour notes in a measure. colorMap: null = use defaultColor for all,
@@ -140,6 +142,7 @@
         }
 
         function clearHighlights() {
+            // Keep for player-led mode, but make it optional
             if (!osmd?.Sheet?.SourceMeasures) return;
             for (const measure of osmd.Sheet.SourceMeasures) {
                 highlightMeasureNotes(measure, '#000000');

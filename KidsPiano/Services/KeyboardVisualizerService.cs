@@ -132,6 +132,10 @@ public class KeyboardVisualizerService
     public void SetZoom(int zoomLevel)
     {
         _state.ZoomLevel = zoomLevel == 88 ? 88 : Math.Clamp(zoomLevel, 1, 4);
+        if (_state.ZoomLevel == 88)
+        {
+            _state.StartOctave = 0;           // ← Critical fix: start from lowest octave
+        }
         InitializeKeyboard();
     }
 

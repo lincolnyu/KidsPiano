@@ -248,12 +248,15 @@ public class PlaybackService : IDisposable
 
             if (_metronomeVolume > 0)
             {
-                // Use channel 10 (percussion) — note 37 = Side Stick, 76 = High Wood Block
-                var note = b == 0 ? 76 : 77; // accent on beat 1
-                var vel = (int)(_metronomeVolume / 100.0 * 100 + 27);
-                vel = Math.Clamp(vel, 0, 127);
-                _midiOut.Send(MidiMessage.StartNote(note, vel, 9).RawData); // ch 10 = index 9
-                await Task.Delay(30, token);
+                // Better metronome: Use dedicated GM metronome sounds
+                // note 37 = Side Stick, 76 = High Wood Block
+                // 32 = Metronome Click (soft tick), 33 = Metronome Bell (accent)
+                //var note = b == 0 ? 76 : 37; // accent on beat 1
+                var note = b == 0 ? 33 : 32; // Strong accent on first beat of measure
+                var vel = (int)(_metronomeVolume * 1.27); // Better scaling (was +27)
+                vel = Math.Clamp(vel, 40, 110); // Avoid too quiet or too loud
+                _midiOut.Send(MidiMessage.StartNote(note, vel, 9).RawData); // Channel 10 (index 9)
+                await Task.Delay(25, token); // Slightly shorter click
                 _midiOut.Send(MidiMessage.StopNote(note, 0, 9).RawData);
             }
 

@@ -80,11 +80,14 @@
                 <StackPanel Margin="8,4">
                     <TextBlock Text="Speed" FontSize="18" Foreground="White" Margin="0,0,0,4"/>
                     <StackPanel Orientation="Horizontal">
-                        <Button Content="0.1x" Width="68"  Height="50" Tag="0.1" Click="SpeedButton_Click" Margin="2" FontSize="20"/>
-                        <Button Content="0.25x" Width="72" Height="50" Tag="0.25" Click="SpeedButton_Click" Margin="2" FontSize="20"/>
-                        <Button Content="0.5x" Width="68"  Height="50" Tag="0.5" Click="SpeedButton_Click" Margin="2" FontSize="20"/>
+                        <Button x:Name="btnSpeed01" Content="0.1x" Width="68" Height="50" Tag="0.1" 
+                                Click="SpeedButton_Click" Margin="2" FontSize="20"/>
+                        <Button x:Name="btnSpeed025" Content="0.25x" Width="72" Height="50" Tag="0.25" 
+                                Click="SpeedButton_Click" Margin="2" FontSize="20"/>
+                        <Button x:Name="btnSpeed05" Content="0.5x" Width="68" Height="50" Tag="0.5" 
+                                Click="SpeedButton_Click" Margin="2" FontSize="20"/>
                         <Button x:Name="btnSpeed1x" Content="1x" Width="60" Height="50" Tag="1.0"
-                                Background="#FF4CAF50" Click="SpeedButton_Click" Margin="2" FontSize="20"/>
+                                Click="SpeedButton_Click" Margin="2" FontSize="20"/>
                     </StackPanel>
                 </StackPanel>
 

@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using KidsPiano.Models;
 using KidsPiano.Services;
 using Microsoft.Web.WebView2.Core;
@@ -64,6 +65,7 @@ public partial class MainWindow : Window
         webViewScore.CoreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
         _keyboardService.InitializeKeyboard();
         cmbZoom.SelectedIndex = 2; // 3 octaves default
+        UpdateSpeedButtonHighlights();
     }
 
     private void CoreWebView2_WebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -296,10 +298,7 @@ public partial class MainWindow : Window
             _isPlaying = false;
             btnPlayPause.Content = "▶ Play";
 
-            _keyboardService.UpdateExpectedNotes(expectedNotes =>
-            {
-                expectedNotes.Clear();
-            });
+            _keyboardService.UpdateExpectedNotes(expectedNotes => { expectedNotes.Clear(); });
         });
     }
 
@@ -317,8 +316,30 @@ public partial class MainWindow : Window
         if (sender is Button btn && double.TryParse(btn.Tag?.ToString(), out var speed))
         {
             _currentSpeed = speed;
+            UpdateSpeedButtonHighlights(); // ← This makes it highlight
+            if (!IsPlayerLed && _isPlaying) _playback.SetSpeed(speed);
         }
     }
+
+    // Add this helper method
+    private void UpdateSpeedButtonHighlights()
+    {
+        // Reset all to default (kid-friendly light blue / white-ish)
+        btnSpeed01.Background = new SolidColorBrush(Color.FromRgb(100, 180, 255));
+        btnSpeed025.Background = new SolidColorBrush(Color.FromRgb(100, 180, 255));
+        btnSpeed05.Background = new SolidColorBrush(Color.FromRgb(100, 180, 255));
+        btnSpeed1x.Background = new SolidColorBrush(Color.FromRgb(100, 180, 255));
+        // Highlight the active one in nice green
+        if (Math.Abs(_currentSpeed - 0.1) < 0.01)
+            btnSpeed01.Background = new SolidColorBrush(Color.FromRgb(76, 175, 80));
+        else if (Math.Abs(_currentSpeed - 0.25) < 0.01)
+            btnSpeed025.Background = new SolidColorBrush(Color.FromRgb(76, 175, 80));
+        else if (Math.Abs(_currentSpeed - 0.5) < 0.01)
+            btnSpeed05.Background = new SolidColorBrush(Color.FromRgb(76, 175, 80));
+        else if (Math.Abs(_currentSpeed - 1.0) < 0.01)
+            btnSpeed1x.Background = new SolidColorBrush(Color.FromRgb(76, 175, 80));
+    }
+
 
     private void btnPlayPause_Click(object sender, RoutedEventArgs e)
     {

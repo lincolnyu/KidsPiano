@@ -15,6 +15,7 @@ public class PlaybackService : IDisposable
     private const int PianoProgram = 0; // GM program 0 = Grand Piano
     private const int DefaultTempo = 120; // BPM when no tempo marking in score
     private CancellationTokenSource? _cts;
+    private double _currentSpeedMultiplier;
     private bool _disposed;
 
     // Metronome volume 0-100; 0 = disabled
@@ -88,11 +89,13 @@ public class PlaybackService : IDisposable
         var token = _cts.Token;
         IsPlaying = true;
 
+        _currentSpeedMultiplier = speedMultiplier;
+
         _playTask = Task.Run(async () =>
         {
             try
             {
-                await PlayPiece(piece, startMeasureIndex, speedMultiplier, token);
+                await PlayPiece(piece, startMeasureIndex, token);
             }
             catch (OperationCanceledException)
             {
@@ -117,9 +120,15 @@ public class PlaybackService : IDisposable
         IsPlaying = false;
     }
 
+    public void SetSpeed(double speedMultiplier)
+    {
+        _currentSpeedMultiplier = Math.Max(0.1, speedMultiplier);
+    }
+
+
     // ── Playback loop ──────────────────────────────────────────────────────
 
-    private async Task PlayPiece(Piece piece, int startIndex, double speed, CancellationToken token)
+    private async Task PlayPiece(Piece piece, int startIndex, CancellationToken token)
     {
         for (var mi = startIndex; mi < piece.Measures.Count; mi++)
         {
@@ -128,25 +137,19 @@ public class PlaybackService : IDisposable
             var measure = piece.Measures[mi];
             OnMeasureStarted?.Invoke(mi);
 
-            // tempo is the number of quarter notes (beats) / minute
-            // each minute there are `tempo` beats
-            // each beat takes 60/tempo secs = 60000 ms / tempo
-            var beatMs = 60000 / measure.Tempo / speed;
-
             //// Metronome: fire ticks at the start of each beat in this measure
-            //int beats = measure.BeatsPerMeasure;
-            //var metronomeTask = RunMetronomeForMeasure(beats, beatMs, token);
+            var metronomeTask = RunMetronomeForMeasure(measure.BeatsPerMeasure, measure.Tempo, token);
 
             // Build note events: we need to know when each note ends
             // Notes in MusicXML are sequential (or chords). We replay them in order.
-            await PlayMeasureNotes(measure, beatMs, speed, token);
+            await PlayMeasureNotes(measure, token);
 
             // Wait for metronome task to complete for this measure
             //await metronomeTask;
         }
     }
 
-    private async Task PlayMeasureNotes(Measure measure, double beatMs, double speed, CancellationToken token)
+    private async Task PlayMeasureNotes(Measure measure, CancellationToken token)
     {
         if (_midiOut == null) return;
 
@@ -194,10 +197,7 @@ public class PlaybackService : IDisposable
                 _midiOut.Send(MidiMessage.StartNote(n.MidiPitch, velocity, MidiChannel).RawData);
                 OnNoteChanged?.Invoke(n.MidiPitch, true);
                 var idx = notesOff.BinarySearch(n, NotesComparerByEnd.Instance);
-                if (idx < 0)
-                {
-                    idx = -idx - 1;
-                }
+                if (idx < 0) idx = -idx - 1;
                 notesOff.Insert(idx, n);
             }
 
@@ -223,6 +223,10 @@ public class PlaybackService : IDisposable
 
         double DurationToMs(double duration)
         {
+            // tempo is the number of quarter notes (beats) / minute
+            // each minute there are `tempo` beats
+            // each beat takes 60/tempo secs = 60000 ms / tempo
+            var beatMs = 60000 / measure.Tempo / _currentSpeedMultiplier;
             return duration * beatMs;
         }
 
@@ -233,7 +237,7 @@ public class PlaybackService : IDisposable
         }
     }
 
-    private async Task RunMetronomeForMeasure(int beats, double beatMs, CancellationToken token)
+    private async Task RunMetronomeForMeasure(int beats, double measureTempo, CancellationToken token)
     {
         if (_metronomeVolume == 0 || _midiOut == null) return;
 
@@ -253,6 +257,7 @@ public class PlaybackService : IDisposable
                 _midiOut.Send(MidiMessage.StopNote(note, 0, 9).RawData);
             }
 
+            var beatMs = 60000 / measureTempo / _currentSpeedMultiplier;
             await Task.Delay(Math.Max(0, (int)beatMs - 30), token);
         }
     }

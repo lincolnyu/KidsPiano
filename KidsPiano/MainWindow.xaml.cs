@@ -12,9 +12,6 @@ namespace KidsPiano;
 
 public partial class MainWindow : Window
 {
-    private readonly HashSet<int> _currentlyPlayingPitches = new();
-
-    private readonly List<int> _currentNoteIndices = new(); // NEW: for JS
     private readonly KeyboardVisualizerService _keyboardService;
 
     // ── Services ───────────────────────────────────────────────────────────────
@@ -146,6 +143,7 @@ public partial class MainWindow : Window
         txtSongName.Text = piece.Title;
         _currentPiece = piece;
         _currentMeasureIndex = 0;
+        _onsetIndex = 0;
         _currentMusicXmlContent = File.ReadAllText(filePath);
 
         // Load into OSMD
@@ -269,16 +267,26 @@ public partial class MainWindow : Window
     {
         // Advance to next note/chord within the measure, or next measure
         // For v1: advance one whole measure at a time (simplification)
-        AdvanceToNextMeasure();
+        Dispatcher.Invoke(() =>
+        {
+            var starts = CurrentOnsetStarts();
+            if (_onsetIndex + 1 < starts.Count)
+            {
+                _onsetIndex++;
+                RefreshCurrentMeasure();
+            }
+            else
+            {
+                AdvanceToNextMeasure();
+            }
+        });
     }
 
     private void OnRepeatSegment()
     {
         Dispatcher.Invoke(() =>
         {
-            _tracking.SetExpectedPitches(
-                _currentPiece?.Measures[_currentMeasureIndex].Notes
-                    .Select(n => n.MidiPitch).Distinct() ?? Enumerable.Empty<int>());
+            _onsetIndex = 0;
             RefreshCurrentMeasure();
         });
     }
@@ -319,7 +327,7 @@ public partial class MainWindow : Window
     private void AdvanceToNextMeasure()
     {
         if (_currentPiece == null) return;
-
+        _onsetIndex = 0;
         if (_currentMeasureIndex < _currentPiece.Measures.Count - 1)
         {
             _currentMeasureIndex++;
@@ -338,6 +346,7 @@ public partial class MainWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
+            _onsetIndex = 0;
             _currentMeasureIndex = measureIndex;
             ClearSoundingNotes();
             RefreshCurrentMeasure();
@@ -365,27 +374,6 @@ public partial class MainWindow : Window
 
             PushSoundingHighlights();
         });
-    }
-
-
-    private void UpdateCurrentNoteIndices()
-    {
-        _currentNoteIndices.Clear();
-        // TODO: You need to expose current measure's notes from your MusicXML parser / PlaybackService
-        // For now, this is placeholder. We may need to enhance the playback event to pass indices.
-    }
-
-    private void HighlightCurrentNotesInScore(List<int> noteIndices)
-    {
-        if (webViewScore?.CoreWebView2 == null) return;
-        try
-        {
-            var json = JsonSerializer.Serialize(noteIndices);
-            webViewScore.CoreWebView2.ExecuteScriptAsync($"highlightCurrentNotes({json})");
-        }
-        catch
-        {
-        }
     }
 
 
@@ -450,8 +438,15 @@ public partial class MainWindow : Window
         if (IsPlayerLed)
         {
             // Player-led: pause/resume tracking
-            if (_isPlaying) _tracking.Resume();
-            else _tracking.Pause();
+            if (_isPlaying)
+            {
+                RefreshCurrentMeasure(); // sets expected onset + blue heads
+                _tracking.Resume();
+            }
+            else
+            {
+                _tracking.Pause();
+            }
         }
         else
         {
@@ -469,6 +464,7 @@ public partial class MainWindow : Window
         btnPlayPause.Content = "▶ Play";
         _playback.Stop();
 
+        _onsetIndex = 0;
         _currentMeasureIndex = 0;
         ClearSoundingNotes();
         RefreshCurrentMeasure();
@@ -477,6 +473,7 @@ public partial class MainWindow : Window
     private void btnNext_Click(object sender, RoutedEventArgs e)
     {
         if (_currentPiece == null || _currentMeasureIndex >= _currentPiece.Measures.Count - 1) return;
+        _onsetIndex = 0;
         _currentMeasureIndex++;
         ClearSoundingNotes();
         RefreshCurrentMeasure();
@@ -485,6 +482,7 @@ public partial class MainWindow : Window
     private void btnPrev_Click(object sender, RoutedEventArgs e)
     {
         if (_currentMeasureIndex <= 0) return;
+        _onsetIndex = 0;
         _currentMeasureIndex--;
         ClearSoundingNotes();
         RefreshCurrentMeasure();
@@ -547,5 +545,16 @@ public partial class MainWindow : Window
             _playback.Stop();
             _tracking.Pause();
         }
+        if (_isPlaying)
+        {
+            _isPlaying = false;
+            btnPlayPause.Content = "▶ Play";
+            _playback.Stop();
+            _tracking.Pause();
+        }
+
+        _onsetIndex = 0;
+        if (_currentPiece != null)
+            RefreshCurrentMeasure();
     }
 }

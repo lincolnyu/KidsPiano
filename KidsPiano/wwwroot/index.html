@@ -5,26 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Kids Piano Score</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body {
             width: 100%;
             height: 100%;
             background: #ffffff;
             overflow: hidden;
         }
-
         #osmdContainer {
             width: 100%;
             height: 100%;
             overflow-y: auto;
             overflow-x: hidden;
         }
-
         #statusMsg {
             position: fixed;
             top: 50%;
@@ -40,35 +33,44 @@
 <div id="statusMsg">Open a MusicXML file to begin 🎵</div>
 <div id="osmdContainer"></div>
 
-<!-- OpenSheetMusicDisplay from CDN -->
-<script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.6/build/opensheetmusicdisplay.min.js"></script>
+<!-- 1.9.9: GraphicalNote.setColor without a full re-render -->
+<script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.9.9/build/opensheetmusicdisplay.min.js"></script>
 
 <script>
-        let osmd = null;
-        let currentMeasureIndex = 0;  // 0-based
+        const COLOR_DEFAULT = '#000000';
+        const COLOR_CURRENT = '#2196F3';
+        const COLOR_GREEN   = '#4CAF50';
+        const COLOR_ORANGE  = '#FF9800';
+        const COLOR_RED     = '#F44336';
+        const START_BEAT_TOLERANCE = 0.4; // quarter-note beats
 
-        // ── Initialise OSMD ───────────────────────────────────────────────────────
+        let osmd = null;
+        let currentMeasureIndex = 0;
+        let lastScrolledMeasure = -1;
+        let painted = []; // GraphicalNotes we have recoloured
+
         function initOsmd() {
             osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay('osmdContainer', {
                 autoResize: true,
-                drawTitle: false,             // title shown in WPF bar
+                drawTitle: false,
                 drawSubtitle: false,
                 drawComposer: false,
                 drawCredits: false,
-                followCursor: true,
-                drawingParameters: 'default',
+                followCursor: false,
+                drawingParameters: 'default'
             });
         }
 
-        // ── Load score (called from C# via ExecuteScriptAsync) ────────────────────
         async function loadScore(musicXmlString) {
             try {
                 document.getElementById('statusMsg').style.display = 'none';
                 if (!osmd) initOsmd();
+                painted = [];
+                lastScrolledMeasure = -1;
                 await osmd.load(musicXmlString);
                 osmd.render();
                 currentMeasureIndex = 0;
-                highlightMeasure(0);
+                scrollToMeasure(0);
                 return { ok: true };
             } catch (e) {
                 console.error('OSMD load error:', e);
@@ -78,116 +80,240 @@
             }
         }
 
-        // ── Highlight a specific measure (0-based) ────────────────────────────────
-        let lastHighlightedMeasure = 0;
+        // Transport only: scroll the measure into view. Does NOT colour the bar.
         function highlightMeasure(measureIndex) {
-            if (!osmd?.Sheet) return;
-
             currentMeasureIndex = measureIndex;
-            // Only reset the previous measure (much faster)
-            if (lastHighlightedMeasure !== measureIndex) {
-                const prevMeasure = osmd.Sheet.SourceMeasures[lastHighlightedMeasure];
-                if (prevMeasure) highlightMeasureNotes(prevMeasure, '#000000');
-            }
-            const measures = osmd.Sheet.SourceMeasures;
-            if (measureIndex >= measures.length) return;
-            const measure = measures[measureIndex];
-            if (!measure) return;
-            highlightMeasureNotes(measure, '#2196F3'); // blue = current
-            // Scroll with less delay
-            try {
-                const staffMeasure = osmd.GraphicSheet?.MeasureList?.[measureIndex]?.[0];
-                if (staffMeasure?.SVGElement) {
-                    staffMeasure.SVGElement.scrollIntoView({
-                        behavior: 'auto',     // 'smooth' → 'auto' for snappier feel
-                        block: 'nearest'
-                    });
-                }
-            } catch (_) { }
-            lastHighlightedMeasure = measureIndex;
+            scrollToMeasure(measureIndex);
         }
 
-        // Colour notes in a measure. colorMap: null = use defaultColor for all,
-        // or Map<midiPitch, cssColor> for per-note colouring.
-        function highlightMeasureNotes(measure, defaultColor, colorMap) {
-            if (!measure) return;
-            const staffEntries = measure.VerticalSourceStaffEntryContainers || [];
-            for (const vsec of staffEntries) {
+        function scrollToMeasure(measureIndex) {
+            if (!osmd) return;
+            if (measureIndex === lastScrolledMeasure) return;
+            lastScrolledMeasure = measureIndex;
+            try {
+                const list = osmd.GraphicSheet?.MeasureList || osmd.graphic?.measureList;
+                const staffMeasure = list?.[measureIndex]?.[0];
+                const el = staffMeasure?.SVGElement || staffMeasure?.getSVGGElement?.();
+                if (el && el.scrollIntoView) {
+                    el.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+                }
+            } catch (_) { }
+        }
+
+        function clearHighlights() {
+            resetPainted();
+        }
+
+        function resetPainted() {
+            for (const g of painted) paintGraphicalNote(g, COLOR_DEFAULT);
+            painted = [];
+        }
+
+        /**
+         * App-led: colour only the notes that are sounding right now.
+         * notesJson: [ { midi: 60, start: 0.0 }, ... ]
+         * start = quarter-note beats from the beginning of the measure (parser ActualStart).
+         */
+        function setSoundingNotes(measureIndex, notesJson) {
+            if (!osmd?.Sheet) return;
+            currentMeasureIndex = measureIndex;
+            scrollToMeasure(measureIndex);
+
+            const targets = normaliseTargets(notesJson);
+            resetPainted();
+            if (targets.length === 0) return;
+
+            const matched = matchTargetsToMeasure(measureIndex, targets);
+            for (const item of matched) {
+                const g = graphicalOf(item.note);
+                if (!g) continue;
+                paintGraphicalNote(g, COLOR_CURRENT);
+                painted.push(g);
+            }
+        }
+
+        /**
+         * Player-led: colour matched notes by status.
+         * notesJson: [ { midi: 60, start: 0.0, status: "green"|"orange"|"red"|"blue" }, ... ]
+         */
+        function updateNoteColors(measureIndex, notesJson) {
+            if (!osmd?.Sheet) return;
+            currentMeasureIndex = measureIndex;
+            scrollToMeasure(measureIndex);
+
+            const targets = normaliseTargets(notesJson);
+            resetPainted();
+            if (targets.length === 0) return;
+
+            const matched = matchTargetsToMeasure(measureIndex, targets);
+            for (const item of matched) {
+                const g = graphicalOf(item.note);
+                if (!g) continue;
+                paintGraphicalNote(g, statusToColor(item.status));
+                painted.push(g);
+            }
+        }
+
+        function statusToColor(status) {
+            if (status === 'green')  return COLOR_GREEN;
+            if (status === 'orange') return COLOR_ORANGE;
+            if (status === 'red')    return COLOR_RED;
+            return COLOR_CURRENT;
+        }
+
+        function normaliseTargets(notesJson) {
+            const raw = typeof notesJson === 'string' ? JSON.parse(notesJson) : (notesJson || []);
+            if (!Array.isArray(raw)) {
+                // Back-compat: { "60": "green" } → treat as pitch-only in current measure
+                return Object.entries(raw).map(([pitch, status]) => ({
+                    midi: parseInt(pitch, 10),
+                    start: null,
+                    status
+                }));
+            }
+            return raw.map(n => ({
+                midi: n.midi ?? n.Midi ?? n.pitch ?? n.Pitch,
+                start: (n.start ?? n.Start ?? n.startBeats ?? n.ActualStart),
+                status: n.status ?? n.Status ?? n.color ?? n.Color
+            })).filter(n => Number.isFinite(n.midi));
+        }
+
+        function matchTargetsToMeasure(measureIndex, targets) {
+            const candidates = collectMeasureNotes(measureIndex);
+            const used = new Set();
+            const matched = [];
+
+            for (const t of targets) {
+                let best = null;
+                let bestDist = Infinity;
+                for (let i = 0; i < candidates.length; i++) {
+                    if (used.has(i)) continue;
+                    const c = candidates[i];
+                    if (c.midi !== t.midi) continue;
+                    const dist = (t.start == null || !Number.isFinite(t.start))
+                        ? 0
+                        : Math.abs(c.startBeats - t.start);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        best = i;
+                    }
+                }
+                if (best == null) continue;
+                if (t.start != null && Number.isFinite(t.start) && bestDist > START_BEAT_TOLERANCE) {
+                    // Still take it if this is the only unused same-pitch note
+                    const samePitchLeft = candidates.filter((c, i) => !used.has(i) && c.midi === t.midi);
+                    if (samePitchLeft.length !== 1) continue;
+                }
+                used.add(best);
+                matched.push({ ...candidates[best], status: t.status });
+            }
+            return matched;
+        }
+
+        function collectMeasureNotes(measureIndex) {
+            const result = [];
+            const measure = osmd.Sheet?.SourceMeasures?.[measureIndex];
+            if (!measure) return result;
+
+            const containers = measure.VerticalSourceStaffEntryContainers || [];
+            for (const vsec of containers) {
                 if (!vsec) continue;
                 for (const staffEntry of (vsec.StaffEntries || [])) {
                     if (!staffEntry) continue;
                     for (const voiceEntry of (staffEntry.VoiceEntries || [])) {
                         if (!voiceEntry) continue;
+                        // VoiceEntry.Timestamp is a Fraction in whole notes, relative to the measure.
+                        const startBeats = fractionToBeats(voiceEntry.Timestamp)
+                            ?? fractionToBeats(staffEntry.Timestamp)
+                            ?? 0;
                         for (const note of (voiceEntry.Notes || [])) {
-                            let color = defaultColor;
-                            if (colorMap) {
-                                const midi = noteToMidi(note);
-                                color = colorMap.get(midi) || defaultColor;
-                            }
-                            setNoteColor(note, color);
+                            if (!note) continue;
+                            if (typeof note.isRest === 'function' ? note.isRest() : note.isRest) continue;
+                            const midi = noteToMidi(note);
+                            if (midi < 0) continue;
+                            result.push({ midi, startBeats, note, voiceEntry });
                         }
                     }
                 }
             }
-            // Re-render just the changed notes
-            try { osmd.render(); } catch (_) { }
+            return result;
         }
 
-        function setNoteColor(note, color) {
-            if (!note) return;
-            try {
-                note.NoteheadColor = color;
-                note.coloringMode = opensheetmusicdisplay.ColoringModes.CustomColorSet;
-            } catch (_) { }
+        function fractionToBeats(frac) {
+            if (!frac) return null;
+            const whole = typeof frac.realValue === 'number'
+                ? frac.realValue
+                : (frac.RealValue ?? null);
+            if (typeof whole !== 'number' || Number.isNaN(whole)) return null;
+            return whole * 4; // whole notes → quarter-note beats
         }
 
-        function clearHighlights() {
-            // Keep for player-led mode, but make it optional
-            if (!osmd?.Sheet?.SourceMeasures) return;
-            for (const measure of osmd.Sheet.SourceMeasures) {
-                highlightMeasureNotes(measure, '#000000');
-            }
-        }
-
-        // ── Per-note status colouring (from C# player-led tracking) ─────────────
-        // statusMap: JSON object { "<midiPitch>": "green"|"orange"|"red" }
-        function updateNoteColors(measureIndex, statusMapJson) {
-            if (!osmd?.Sheet) return;
-            const raw = typeof statusMapJson === 'string' ? JSON.parse(statusMapJson) : statusMapJson;
-            const colorMap = new Map();
-            for (const [pitch, status] of Object.entries(raw)) {
-                const color = status === 'green' ? '#4CAF50'
-                    : status === 'orange' ? '#FF9800'
-                        : status === 'red' ? '#F44336'
-                            : '#2196F3';
-                colorMap.set(parseInt(pitch, 10), color);
-            }
-            const measure = osmd.Sheet.SourceMeasures[measureIndex];
-            if (measure) highlightMeasureNotes(measure, '#2196F3', colorMap);
-        }
-
-        // ── Utility: note object → MIDI pitch ─────────────────────────────────────
         function noteToMidi(note) {
             try {
+                if (typeof note.halfTone === 'number' && note.halfTone > 0) {
+                    // OSMD halfTone is MIDI − 12 (see OSMD issue #224)
+                    return note.halfTone + 12;
+                }
                 const p = note.Pitch;
                 if (!p) return -1;
                 const steps = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
-                const base = steps[p.FundamentalNote?.charAt(0)] ?? 0;
-                const alter = p.Accidental?.HalfTones ?? 0;
-                return (p.Octave + 1) * 12 + base + alter;
-            } catch (_) { return -1; }
+                const letter = p.FundamentalNote?.charAt?.(0) || p.FundamentalNote;
+                const base = steps[letter] ?? 0;
+                const alter = p.Accidental?.HalfTones ?? p.Accidental ?? 0;
+                const octave = p.Octave ?? 4;
+                return (octave + 1) * 12 + base + alter;
+            } catch (_) {
+                return -1;
+            }
         }
 
-        // ── C# interop helpers ────────────────────────────────────────────────────
-        // These are called via ExecuteScriptAsync from C#.
-        // They all return JSON strings so C# can parse the result safely.
+        function graphicalOf(note) {
+            try {
+                return osmd.EngravingRules?.GNote?.(note)
+                    || osmd.rules?.GNote?.(note)
+                    || null;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function paintGraphicalNote(gNote, color) {
+            if (!gNote) return;
+            try {
+                if (typeof gNote.setColor === 'function') {
+                    gNote.setColor(color, {
+                        applyToNoteheads: true,
+                        applyToStem: true,
+                        applyToFlag: true
+                    });
+                    return;
+                }
+            } catch (_) { }
+
+            try {
+                if (gNote.sourceNote) gNote.sourceNote.NoteheadColor = color;
+                const el = gNote.getSVGGElement?.();
+                if (!el) return;
+                el.querySelectorAll('path, ellipse, circle').forEach(node => {
+                    if (node.style.fill && node.style.fill !== 'none') node.style.fill = color;
+                    if (node.getAttribute('fill') && node.getAttribute('fill') !== 'none') {
+                        node.setAttribute('fill', color);
+                    }
+                    const stroke = node.style.stroke || node.getAttribute('stroke');
+                    if (stroke && stroke !== 'none') {
+                        node.style.stroke = color;
+                        node.setAttribute('stroke', color);
+                    }
+                });
+            } catch (_) { }
+        }
 
         window.loadScore = loadScore;
         window.highlightMeasure = highlightMeasure;
+        window.setSoundingNotes = setSoundingNotes;
         window.updateNoteColors = updateNoteColors;
         window.clearHighlights = clearHighlights;
 
-        // Ready signal
         window.chrome?.webview?.postMessage(JSON.stringify({ type: 'ready' }));
     </script>
 </body>

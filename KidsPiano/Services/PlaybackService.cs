@@ -61,7 +61,9 @@ public class PlaybackService : IDisposable
     public event Action<int>? OnMeasureStarted; // measure index (0-based)
     public event Action? OnPlaybackFinished;
     public event Action? OnMetronomeTick;
-    public event Action<int, bool>? OnNoteChanged;
+
+    /// <summary>midiPitch, isOn, actualStart (quarter-note beats from measure start).</summary>
+    public event Action<int, bool, double>? OnNoteChanged;
 
     private void TryOpenMidiOut()
     {
@@ -183,7 +185,7 @@ public class PlaybackService : IDisposable
                     if (n.ActualStart > currentOffset || n.MidiPitch != noteOff.MidiPitch)
                         // Only send note off if the next note isn't starting at the same time with the same pitch (i.e. a repeated note)
                         _midiOut.Send(MidiMessage.StopNote(noteOff.MidiPitch, 0, MidiChannel).RawData);
-                    OnNoteChanged?.Invoke(noteOff.MidiPitch, false);
+                    OnNoteChanged?.Invoke(noteOff.MidiPitch, false, noteOff.ActualStart);
                 }
 
                 notesOff.RemoveAt(0);
@@ -195,7 +197,7 @@ public class PlaybackService : IDisposable
             if (n.MidiPitch is >= 21 and <= 108)
             {
                 _midiOut.Send(MidiMessage.StartNote(n.MidiPitch, velocity, MidiChannel).RawData);
-                OnNoteChanged?.Invoke(n.MidiPitch, true);
+                OnNoteChanged?.Invoke(n.MidiPitch, true, n.ActualStart);
                 var idx = notesOff.BinarySearch(n, NotesComparerByEnd.Instance);
                 if (idx < 0) idx = -idx - 1;
                 notesOff.Insert(idx, n);
@@ -215,7 +217,7 @@ public class PlaybackService : IDisposable
             if (noteOff.MidiPitch >= 21 && noteOff.MidiPitch <= 108)
             {
                 _midiOut.Send(MidiMessage.StopNote(noteOff.MidiPitch, 0, MidiChannel).RawData);
-                OnNoteChanged?.Invoke(noteOff.MidiPitch, false);
+                OnNoteChanged?.Invoke(noteOff.MidiPitch, false, noteOff.ActualStart);
             }
 
             notesOff.RemoveAt(0);

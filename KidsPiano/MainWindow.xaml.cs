@@ -12,12 +12,17 @@ namespace KidsPiano;
 
 public partial class MainWindow : Window
 {
+    private readonly HashSet<int> _currentlyPlayingPitches = new();
+
+    private readonly List<int> _currentNoteIndices = new(); // NEW: for JS
     private readonly KeyboardVisualizerService _keyboardService;
 
     // ── Services ───────────────────────────────────────────────────────────────
     private readonly MusicXmlParserService _parser = new();
     private readonly PitchDetectorService _pitchDetector;
     private readonly PlaybackService _playback;
+
+    private readonly Dictionary<(int Midi, double Start), byte> _soundingNotes = new();
     private readonly TrackingService _tracking = new();
     private int _currentMeasureIndex;
 
@@ -27,7 +32,10 @@ public partial class MainWindow : Window
     private double _currentSpeed = 1.0;
     private bool _isPlaying;
     private string _lastFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+    private int _onsetIndex; // index into distinct ActualStart values of current measure
     private bool _webViewReady;
+
 
     public MainWindow()
     {
@@ -57,6 +65,31 @@ public partial class MainWindow : Window
 
     // Whether we are in player-led mode (false = app-led)
     private bool IsPlayerLed => cmbMode.SelectedIndex == 1;
+
+
+    private List<double> CurrentOnsetStarts()
+    {
+        if (_currentPiece == null || _currentPiece.Measures.Count == 0)
+            return new List<double>();
+        var measure = _currentPiece.Measures[_currentMeasureIndex];
+        return measure.Notes.Select(n => n.ActualStart).Distinct().OrderBy(x => x).ToList();
+    }
+
+    private List<Note> CurrentExpectedOnset()
+    {
+        if (_currentPiece == null || _currentPiece.Measures.Count == 0)
+            return new List<Note>();
+        var measure = _currentPiece.Measures[_currentMeasureIndex];
+        var starts = CurrentOnsetStarts();
+        if (starts.Count == 0) return new List<Note>();
+        _onsetIndex = Math.Clamp(_onsetIndex, 0, starts.Count - 1);
+        return OnsetGroup(measure, starts[_onsetIndex]);
+    }
+
+    private List<Note> OnsetGroup(Measure m, double start)
+    {
+        return m.Notes.Where(n => Math.Abs(n.ActualStart - start) < 0.02).ToList();
+    }
 
     // ── Init ───────────────────────────────────────────────────────────────────
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -155,24 +188,20 @@ public partial class MainWindow : Window
     private void RefreshCurrentMeasure()
     {
         if (_currentPiece == null || _currentPiece.Measures.Count == 0) return;
-
         if (_currentMeasureIndex >= _currentPiece.Measures.Count) _currentMeasureIndex = 0;
 
-        var measure = _currentPiece.Measures[_currentMeasureIndex];
-        //var expectedPitches = measure.Notes.Select(n => n.MidiPitch).Distinct().ToList();
-
-        //// Update keyboard expected keys
-        //_keyboardService.UpdateExpectedNotes(expectedPitches);
-
-        //// Auto-center keyboard on expected note range
-        //if (expectedPitches.Count > 0)
-        //    _keyboardService.CenterOnNotes(expectedPitches);
-
-        // Update OSMD highlight
         _ = HighlightMeasureInScore(_currentMeasureIndex);
 
-        // Set expected pitches for tracking
-        //_tracking.SetExpectedPitches(expectedPitches);
+        if (!IsPlayerLed) return;
+
+        var expectedOnset = CurrentExpectedOnset();
+        _tracking.SetExpectedPitches(expectedOnset.Select(n => n.MidiPitch));
+        _keyboardService.UpdateExpectedNotes(set =>
+        {
+            set.Clear();
+            foreach (var n in expectedOnset) set.Add(n.MidiPitch);
+        });
+        _ = PushExpectedHighlights(expectedOnset, "blue"); // waiting for the child
     }
 
     private async Task HighlightMeasureInScore(int measureIndex)
@@ -186,6 +215,34 @@ public partial class MainWindow : Window
         catch
         {
         }
+    }
+
+    private void PushSoundingHighlights()
+    {
+        var payload = _soundingNotes.Keys
+            .Select(k => new { midi = k.Midi, start = k.Start })
+            .ToList();
+        _ = SetSoundingNotesInScore(_currentMeasureIndex, payload);
+    }
+
+    private async Task SetSoundingNotesInScore(int measureIndex, object payload)
+    {
+        if (webViewScore.CoreWebView2 == null) return;
+        try
+        {
+            var json = JsonSerializer.Serialize(payload);
+            await webViewScore.CoreWebView2.ExecuteScriptAsync(
+                $"setSoundingNotes({measureIndex}, {json})");
+        }
+        catch
+        {
+        }
+    }
+
+    private void ClearSoundingNotes()
+    {
+        _soundingNotes.Clear();
+        _ = SetSoundingNotesInScore(_currentMeasureIndex, Array.Empty<object>());
     }
 
     // ── Pitch detection callback ───────────────────────────────────────────────
@@ -228,22 +285,36 @@ public partial class MainWindow : Window
 
     private void OnTrackingNoteColorsChanged(Dictionary<int, string> playedColors)
     {
-        // Already handled in OnNotesDetected; OSMD score colour update here
-        if (_currentPiece == null) return;
-        var measure = _currentPiece.Measures[_currentMeasureIndex];
-        var expected = measure.Notes.Select(n => n.MidiPitch).Distinct().ToList();
-        var played = playedColors.Keys.ToList();
+        if (_currentPiece == null || !IsPlayerLed) return;
 
+        var expectedOnset = CurrentExpectedOnset();
+        var expected = expectedOnset.Select(n => n.MidiPitch).ToList();
+        var played = playedColors.Keys.ToList();
         var scoreMap = TrackingService.BuildScoreColorMap(played, expected, _tracking.Tolerance);
-        var json = JsonSerializer.Serialize(scoreMap);
+
+        var payload = expectedOnset.Select(n => new
+        {
+            midi = n.MidiPitch,
+            start = n.ActualStart,
+            status = scoreMap.GetValueOrDefault(n.MidiPitch.ToString(), "blue")
+        });
 
         Dispatcher.Invoke(async () =>
         {
-            if (webViewScore.CoreWebView2 != null)
-                await webViewScore.CoreWebView2.ExecuteScriptAsync(
-                    $"updateNoteColors({_currentMeasureIndex}, {json})");
+            if (webViewScore.CoreWebView2 == null) return;
+            await webViewScore.CoreWebView2.ExecuteScriptAsync(
+                $"updateNoteColors({_currentMeasureIndex}, {JsonSerializer.Serialize(payload)})");
         });
     }
+
+    private async Task PushExpectedHighlights(IEnumerable<Note> expectedOnset, string status)
+    {
+        if (webViewScore.CoreWebView2 == null) return;
+        var payload = expectedOnset.Select(n => new { midi = n.MidiPitch, start = n.ActualStart, status });
+        await webViewScore.CoreWebView2.ExecuteScriptAsync(
+            $"updateNoteColors({_currentMeasureIndex}, {JsonSerializer.Serialize(payload)})");
+    }
+
 
     private void AdvanceToNextMeasure()
     {
@@ -268,28 +339,55 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() =>
         {
             _currentMeasureIndex = measureIndex;
+            ClearSoundingNotes();
             RefreshCurrentMeasure();
 
             // Although it's a good practice to clear the expectedKeys here, we leave it to note off.
         });
     }
 
-    private void OnPlaybackNoteChange(int midiPitch, bool on)
+    private void OnPlaybackNoteChange(int midiPitch, bool on, double actualStart)
     {
         Dispatcher.Invoke(() =>
         {
-            // Update keyboard expected keys
+            var key = (midiPitch, Math.Round(actualStart, 4));
+            if (on) _soundingNotes[key] = 1;
+            else _soundingNotes.Remove(key);
+
             _keyboardService.UpdateExpectedNotes(expectedNotes =>
             {
                 if (on) expectedNotes.Add(midiPitch);
                 else expectedNotes.Remove(midiPitch);
 
-                // Auto-center keyboard on expected note range
                 if (expectedNotes.Count > 0)
                     _keyboardService.CenterOnNotes(expectedNotes);
             });
+
+            PushSoundingHighlights();
         });
     }
+
+
+    private void UpdateCurrentNoteIndices()
+    {
+        _currentNoteIndices.Clear();
+        // TODO: You need to expose current measure's notes from your MusicXML parser / PlaybackService
+        // For now, this is placeholder. We may need to enhance the playback event to pass indices.
+    }
+
+    private void HighlightCurrentNotesInScore(List<int> noteIndices)
+    {
+        if (webViewScore?.CoreWebView2 == null) return;
+        try
+        {
+            var json = JsonSerializer.Serialize(noteIndices);
+            webViewScore.CoreWebView2.ExecuteScriptAsync($"highlightCurrentNotes({json})");
+        }
+        catch
+        {
+        }
+    }
+
 
     private void OnPlaybackFinished()
     {
@@ -297,6 +395,7 @@ public partial class MainWindow : Window
         {
             _isPlaying = false;
             btnPlayPause.Content = "▶ Play";
+            ClearSoundingNotes();
 
             _keyboardService.UpdateExpectedNotes(expectedNotes => { expectedNotes.Clear(); });
         });
@@ -371,6 +470,7 @@ public partial class MainWindow : Window
         _playback.Stop();
 
         _currentMeasureIndex = 0;
+        ClearSoundingNotes();
         RefreshCurrentMeasure();
     }
 
@@ -378,6 +478,7 @@ public partial class MainWindow : Window
     {
         if (_currentPiece == null || _currentMeasureIndex >= _currentPiece.Measures.Count - 1) return;
         _currentMeasureIndex++;
+        ClearSoundingNotes();
         RefreshCurrentMeasure();
     }
 
@@ -385,6 +486,7 @@ public partial class MainWindow : Window
     {
         if (_currentMeasureIndex <= 0) return;
         _currentMeasureIndex--;
+        ClearSoundingNotes();
         RefreshCurrentMeasure();
     }
 

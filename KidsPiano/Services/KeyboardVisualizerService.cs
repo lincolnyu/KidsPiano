@@ -51,17 +51,13 @@ public class KeyboardVisualizerService
         double bkH = wkH * 0.62;
 
         // Start at C of the start octave
-        _startMidiPitch = _state.StartOctave * 12; // MIDI for C of that octave
+        _startMidiPitch = _state.ZoomLevel == 88 ? 21 : _state.StartOctave * 12; // MIDI for C of that octave
 
         // The 88 piano keys start at A0 = MIDI 21 (C-1 = 0, so A0 = 21)
         // We need to map from our start octave C correctly.
         // Standard: MIDI 21 = A0, MIDI 60 = C4, MIDI 108 = C8
         // Octave in MIDI: octave n starts at MIDI (n+1)*12
         // So C4 = (4+1)*12 = 60 ✓
-        if (_state.ZoomLevel == 88)
-        {
-            _startMidiPitch += 21;
-        }
 
         double x = 0;
         int whiteKeyNum = 0;

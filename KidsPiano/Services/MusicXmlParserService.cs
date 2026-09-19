@@ -52,8 +52,8 @@ public class MusicXmlParserService
                         measure.Tempo = bpm;
                 }
 
-                Func<string, double?> typeToUnifiedDuration = null;
-                Func<string, double?> GetTypeToUnifiedDuration()
+                Func<string, double?>? typeToUnifiedDuration = null;
+                Func<string, double?>? GetTypeToUnifiedDuration()
                 {
                     if (typeToUnifiedDuration is null)
                     {
@@ -319,7 +319,7 @@ public class MusicXmlParserService
         return doc.Descendants("part")
             .FirstOrDefault(p =>
             {
-                var id = p.Attribute("id")?.Value;
+                var id = p!.Attribute("id")?.Value;
                 if (pianoParts.Count > 0 && id is not null)
                 {
                     return pianoParts.Contains(id);
@@ -335,14 +335,14 @@ public class MusicXmlParserService
     private int CountParts(XDocument doc) =>
         doc.Descendants("part").Count();
 
-    private static double? GetUnifiedDuration(string durationStr, int divisions)
+    private static double? GetUnifiedDuration(string? durationStr, int divisions)
     {
         return double.TryParse(durationStr, out var raw)
                 ? raw / divisions   // ← the fix: use actual divisions, not hardcoded 4
                 : null;
     }
 
-    private Note? ParseNote(XElement noteElem, int divisions, Func<string, double?> typeToUnitifedDuration)
+    private Note? ParseNote(XElement noteElem, int divisions, Func<string, double?>? typeToUnitifedDuration)
     {
         try
         {
@@ -402,7 +402,7 @@ public class MusicXmlParserService
             return new Note
             {
                 MidiPitch = midiPitch,
-                Step = step,
+                Step = step??"",
                 Octave = octave,
                 RawDuration = rawDuration,
                 Duration = duration.Value,

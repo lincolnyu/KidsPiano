@@ -286,7 +286,7 @@ public class PlaybackService : IDisposable
 
         public int Compare(Note? x, Note? y)
         {
-            return (x.ActualStart + x.ActualDuration).CompareTo(y.ActualStart + y.ActualDuration);
+            return (x!.ActualStart + x.ActualDuration).CompareTo(y!.ActualStart + y.ActualDuration);
         }
     }
 }

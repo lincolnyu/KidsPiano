@@ -31,7 +31,8 @@ public partial class MainWindow : Window
     private string _lastFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
 
     private int _onsetIndex; // index into distinct ActualStart values of current measure
-    private bool _webViewReady;
+
+    public bool WebViewReady { get; private set; }
 
 
     public MainWindow()
@@ -98,13 +99,13 @@ public partial class MainWindow : Window
         UpdateSpeedButtonHighlights();
     }
 
-    private void CoreWebView2_WebMessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
+    private void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         try
         {
             var json = JsonDocument.Parse(e.TryGetWebMessageAsString());
             if (json.RootElement.TryGetProperty("type", out var t) && t.GetString() == "ready")
-                _webViewReady = true;
+                WebViewReady = true;
         }
         catch
         {

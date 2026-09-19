@@ -21,7 +21,7 @@ namespace KidsPiano.Models
 
         public bool IsGrace { get; set; }
 
-        public string Type { get; set; }
+        public string? Type { get; set; }
 
         public override string ToString() => $"Note {MidiPitch} ({Step}{Octave})";
     }

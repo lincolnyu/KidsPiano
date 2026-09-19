@@ -90,14 +90,72 @@
             if (!osmd) return;
             if (measureIndex === lastScrolledMeasure) return;
             lastScrolledMeasure = measureIndex;
+
             try {
-                const list = osmd.GraphicSheet?.MeasureList || osmd.graphic?.measureList;
+                const list = osmd.graphic?.MeasureList;
                 const staffMeasure = list?.[measureIndex]?.[0];
-                const el = staffMeasure?.SVGElement || staffMeasure?.getSVGGElement?.();
-                if (el && el.scrollIntoView) {
-                    el.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+
+                if (!staffMeasure) {
+                    return;
                 }
-            } catch (_) { }
+
+                // Get any graphical note belonging to this measure
+                const note =
+                    staffMeasure.staffEntries?.[0]
+                        ?.graphicalVoiceEntries?.[0]
+                        ?.notes?.[0];
+
+                const noteEl = note?.getSVGGElement?.();
+
+                if (noteEl) {
+                    const el = noteEl.parentElement.parentElement;
+
+                    scrollToTopWithMargin(el, 20);
+                }
+            } catch (e) {
+                console.error("scrollToMeasure:", e);
+            }
+        }
+
+        function scrollToTopWithMargin(el, margin = 20) {
+            if (!el) return;
+
+            const scroller = findScrollParent(el);
+
+            if (!scroller) {
+                el.scrollIntoView({
+                    behavior: 'auto',
+                    block: 'start'
+                });
+                return;
+            }
+
+            const elRect = el.getBoundingClientRect();
+            const scrollerRect = scroller.getBoundingClientRect();
+
+            const delta = elRect.top - scrollerRect.top - margin;
+
+            scroller.scrollTop += delta;
+        }
+
+
+        function findScrollParent(el) {
+            let parent = el.parentElement;
+
+            while (parent) {
+                const style = getComputedStyle(parent);
+
+                if (
+                    (style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                    parent.scrollHeight > parent.clientHeight
+                ) {
+                    return parent;
+                }
+
+                parent = parent.parentElement;
+            }
+
+            return null;
         }
 
         function clearHighlights() {

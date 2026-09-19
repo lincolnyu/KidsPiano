@@ -58,6 +58,10 @@ public class KeyboardVisualizerService
         // Standard: MIDI 21 = A0, MIDI 60 = C4, MIDI 108 = C8
         // Octave in MIDI: octave n starts at MIDI (n+1)*12
         // So C4 = (4+1)*12 = 60 ✓
+        if (_state.ZoomLevel == 88)
+        {
+            _startMidiPitch += 21;
+        }
 
         double x = 0;
         int whiteKeyNum = 0;
